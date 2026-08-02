@@ -1,5 +1,9 @@
 # OpenComputeFlow
 
+<p align="center">
+  <img src="assets/opencomputeflow-icon.svg" width="180" alt="OpenComputeFlow project icon">
+</p>
+
 > **An Experimental AI Compute Architecture Framework**
 >
 > *Exploring explainable and measurable lowering from DNN semantics to hardware execution.*

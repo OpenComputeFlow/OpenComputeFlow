@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">OpenComputeFlow project icon</title>
+  <desc id="desc">A computation graph progressively lowers through layered flows into a hardware chip.</desc>
+
+  <rect width="512" height="512" rx="88" fill="#11181f"/>
+
+  <!-- Tensor graph -->
+  <g fill="none" stroke="#6ed8c8" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M136 128v30l72 48"/>
+    <path d="M256 104v92"/>
+    <path d="M376 128v30l-72 48"/>
+  </g>
+  <circle cx="136" cy="112" r="28" fill="#6ed8c8"/>
+  <circle cx="256" cy="88" r="28" fill="#f5f1e8"/>
+  <circle cx="376" cy="112" r="28" fill="#ff8a6b"/>
+
+  <!-- Progressive lowering layers -->
+  <path d="M112 196h288l-48 64H160z" fill="#f5f1e8"/>
+  <path d="M160 272h192l-40 56H200z" fill="#6ed8c8"/>
+  <path d="M200 340h112l-24 32h-64z" fill="#f3ba4b"/>
+
+  <!-- Hardware execution -->
+  <g stroke="#ff8a6b" stroke-width="16" stroke-linecap="round">
+    <path d="M184 400h-28"/>
+    <path d="M184 440h-28"/>
+    <path d="M328 400h28"/>
+    <path d="M328 440h28"/>
+    <path d="M224 464v20"/>
+    <path d="M288 464v20"/>
+  </g>
+  <rect x="176" y="368" width="160" height="104" rx="18" fill="#ff8a6b"/>
+  <rect x="208" y="392" width="96" height="56" rx="10" fill="#11181f"/>
+  <rect x="224" y="408" width="24" height="24" rx="4" fill="#f5f1e8"/>
+  <rect x="264" y="408" width="24" height="24" rx="4" fill="#f3ba4b"/>
+</svg>
