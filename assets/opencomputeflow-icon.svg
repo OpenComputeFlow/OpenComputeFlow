@@ -5,22 +5,22 @@
   <rect width="512" height="512" rx="88" fill="#ffffff"/>
 
   <!-- Tensor graph -->
-  <g fill="none" stroke="#6ed8c8" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+  <g fill="none" stroke="#159e96" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
     <path d="M136 128v30l72 48"/>
     <path d="M256 104v92"/>
     <path d="M376 128v30l-72 48"/>
   </g>
-  <circle cx="136" cy="112" r="28" fill="#6ed8c8"/>
-  <circle cx="256" cy="88" r="28" fill="#6ed8c8"/>
-  <circle cx="376" cy="112" r="28" fill="#ff8a6b"/>
+  <circle cx="136" cy="112" r="28" fill="#159e96"/>
+  <circle cx="256" cy="88" r="28" fill="#159e96"/>
+  <circle cx="376" cy="112" r="28" fill="#159e96"/>
 
   <!-- Progressive lowering layers -->
-  <path d="M112 196h288l-48 64H160z" fill="#ff8a6b"/>
-  <path d="M160 272h192l-40 56H200z" fill="#6ed8c8"/>
-  <path d="M200 340h112l-24 32h-64z" fill="#ff8a6b"/>
+  <path d="M112 196h288l-48 64H160z" fill="#159e96"/>
+  <path d="M160 272h192l-40 56H200z" fill="#159e96"/>
+  <path d="M200 340h112l-24 32h-64z" fill="#159e96"/>
 
   <!-- Hardware execution -->
-  <g stroke="#ff8a6b" stroke-width="16" stroke-linecap="round">
+  <g stroke="#159e96" stroke-width="16" stroke-linecap="round">
     <path d="M184 400h-28"/>
     <path d="M184 440h-28"/>
     <path d="M328 400h28"/>
@@ -28,8 +28,8 @@
     <path d="M224 464v20"/>
     <path d="M288 464v20"/>
   </g>
-  <rect x="176" y="368" width="160" height="104" rx="18" fill="#ff8a6b"/>
-  <rect x="208" y="392" width="96" height="56" rx="10" fill="#6ed8c8"/>
-  <rect x="224" y="408" width="24" height="24" rx="4" fill="#ffffff"/>
-  <rect x="264" y="408" width="24" height="24" rx="4" fill="#ff8a6b"/>
+  <rect x="176" y="368" width="160" height="104" rx="18" fill="#159e96"/>
+  <rect x="208" y="392" width="96" height="56" rx="10" fill="#ffffff"/>
+  <rect x="224" y="408" width="24" height="24" rx="4" fill="#159e96"/>
+  <rect x="264" y="408" width="24" height="24" rx="4" fill="#159e96"/>
 </svg>
