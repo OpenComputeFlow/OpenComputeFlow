@@ -2,7 +2,7 @@
   <title id="title">OpenComputeFlow project icon</title>
   <desc id="desc">A computation graph progressively lowers through layered flows into a hardware chip.</desc>
 
-  <rect width="512" height="512" rx="88" fill="#ffffff"/>
+  <rect width="512" height="512" fill="#ffffff"/>
 
   <!-- Tensor graph -->
   <g fill="none" stroke="#159e96" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">

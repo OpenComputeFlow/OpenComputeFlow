@@ -1,7 +1,7 @@
 # OpenComputeFlow
 
 <p align="center">
-  <img src="assets/opencomputeflow-icon.svg" width="180" alt="OpenComputeFlow project icon">
+  <img src="assets/opencomputeflow-icon.png" width="180" alt="OpenComputeFlow project icon">
 </p>
 
 > **An Experimental AI Compute Architecture Framework**
