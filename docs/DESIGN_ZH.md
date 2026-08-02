@@ -2,756 +2,960 @@
 
 > **An Experimental AI Compute Architecture Framework**
 >
-> *Exploring the abstraction from DNN APIs to hardware execution.*
+> *Exploring explainable and measurable lowering from DNN semantics to hardware execution.*
+
+本文描述 OpenComputeFlow 的目标架构与演进约束。仓库当前处于设计阶段，文中的目录、方言和接口均是提案；只有通过相应阶段的验收条件后，才能视为已实现能力。
 
 ---
 
 ## 1. 项目定位
 
-### 1.1 我们不是又一个 MLIR Compiler
+### 1.1 要解决的问题
 
-开源社区不缺"把 A 转成 B"的编译器项目：
+OpenComputeFlow 研究 DNN 计算如何从高层算子语义逐步映射到具体硬件。重点不只是“能否生成代码”，而是让每个关键决策都具备：
 
-```
-TensorFlow → MLIR → LLVM → Assembly
-PyTorch → MLIR → LLVM → Assembly
-cuDNN → MLIR → LLVM → Assembly
-```
+- **明确的语义边界**：该层保留什么信息、消除什么信息
+- **可验证的合法性**：变换前后满足哪些不变量
+- **可解释的选择依据**：为何选择某个算法、布局或调度
+- **可复现的结果**：使用哪个目标描述、Cost Model 和候选集合
+- **可度量的效果**：预测值与实测值之间的误差是多少
 
-它们的共同问题：**只回答了"怎么做"，没有回答"为什么这样做"**。
+一个典型问题是：前端表达的卷积、矩阵乘和归约，如何在保持数值语义的前提下，经过算法选择、循环组织、内存规划和目标合法化，最终变成可执行代码。
 
-OpenComputeFlow 的目标不同：
+LLVM/MLIR 是实现基础设施，不是项目要重新实现的部分。项目的研究价值主要位于高层语义、调度搜索、代价建模、目标能力建模和 lowering 可解释性。
 
-> **研究 DNN API 到 AI 芯片执行模型之间的抽象路径。**
+### 1.2 长期目标
 
-我们关心的是：
+OpenComputeFlow 希望成为 AI 编译与芯片架构协同研究的实验平台：
 
-- 一个 `cudnnConvolutionForward` 应该如何被逐步分解为硬件指令？
-- 每一层的抽象边界在哪里？为什么画在那里？
-- 不同的硬件（向量机、脉动阵列、SIMT）如何统一到同一条 lowering 路径下？
-- 如何用 Cost Model 驱动 lowering 决策，而不是硬编码规则？
+- 定义和比较不同的计算抽象，验证其边界是否稳定
+- 插入不同 Cost Model，比较搜索质量、预测误差和编译开销
+- 在同一计算语义下比较不同算法、布局、调度和硬件映射
+- 复用统一的分析与搜索框架，同时允许后端表达各自执行模型
+- 记录完整 lowering trace，解释每个候选被接受或拒绝的原因
 
-**核心价值在 IR 抽象层，不在 LLVM。** LLVM 只是最后一步的编码工具。
+### 1.3 非目标
 
-### 1.2 项目的长期目标
+以下内容不作为早期目标：
 
-成为 AI 芯片架构研究的实验平台——你可以在这个框架上：
+- 替代 MLIR、LLVM 的通用优化、指令选择或机器码生成能力
+- 仅凭一个 YAML 文件支持一种全新的 ISA 或执行模型
+- 在第一个版本覆盖全部 DNN 算子、动态控制流、分布式执行和训练
+- 保证 Cost Model 第一次预测就等价于真实硬件测量
+- 用自研方言重复实现 linalg、scf、affine、vector、memref 已有能力
 
-- 定义新的计算 IR 层，验证抽象边界的合理性
-- 插入 Cost Model，研究自动调优策略
-- 描述一种新硬件，看编译器能否自动生成合理代码
-- 可视化 lowering 全过程，理解计算如何一步步映射到硬件
+### 1.4 成功标准
+
+项目是否成功不能用方言数量或代码量衡量。每个端到端样例至少应回答：
+
+1. 输入计算的形状、布局、数据类型和数值语义是什么？
+2. 生成了哪些合法候选，哪些候选因何被淘汰？
+3. 被选候选的预测代价、置信度和选择目标是什么？
+4. 每层 IR 是否通过 verifier，lowering 后是否保持语义？
+5. 目标代码是否能执行，结果是否通过参考实现校验？
+6. 预测与实测的误差是多少，结果能否用同一配置复现？
 
 ---
 
 ## 2. 核心理念：Progressive Lowering
 
-### 2.1 每一层回答一个问题
+### 2.1 分层原则
 
-一个 Project 如果只是把 cuDNN API 调用的结果转成 LLVM IR，那它只是一段转换代码。但如果你把整个过程分解为清晰的抽象层次，每一层回答一个独立的问题，它就变成了**架构**。
+分层的目的不是强制创建五个自研 Dialect，而是隔离五类不同问题：
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                      回答什么问题？                         │
-├────────────────────────────────────────────────────────────┤
-│  Tensor IR      │  算法是什么？                              │
-│                 │  数据依赖图、算子语义、数据布局             │
-├─────────────────┼──────────────────────────────────────────┤
-│  Loop IR        │  如何计算？                                │
-│                 │  Affine 循环嵌套、访存模式、数据依赖距离    │
-├─────────────────┼──────────────────────────────────────────┤
-│  Schedule IR    │  如何组织计算？                             │
-│                 │  Tile 划分、Pipeline、并行度、循环重排      │
-├─────────────────┼──────────────────────────────────────────┤
-│  Hardware IR    │  如何使用硬件？                             │
-│                 │  向量指令、SIMT 线程束、脉动数据流          │
-├─────────────────┼──────────────────────────────────────────┤
-│  LLVM IR        │  如何编码？                                │
-│                 │  寄存器分配、指令编码、目标三元组            │
-└─────────────────┴──────────────────────────────────────────┘
-```
+| 阶段 | 回答的问题 | 主要保留的信息 | 主要消除的信息 |
+|---|---|---|---|
+| Tensor IR | 计算语义是什么？ | 算子、张量、形状、布局约束、数值策略 | 前端 API 对象和调用细节 |
+| Compute/Loop IR | 计算如何展开？ | 迭代域、索引映射、归约、访存关系 | DNN 算子名称或已选算法的高层封装 |
+| Schedule Plan | 计算如何组织？ | tile、融合、并行、向量化、内存层级等决策 | 未选择的候选 |
+| Hardware IR | 如何合法使用目标能力？ | 目标操作、同步、掩码、DMA/线程/向量语义 | 与目标无关的调度意图 |
+| Backend/Runtime | 如何形成可调用程序？ | ABI、目标特征、地址空间、运行时调用、目标代码 | 编译期 IR |
 
-注意：每一层**只降一个维度的抽象**。Tensor IR 不知道什么是 tile，Schedule IR 不知道什么是 vfmacc，Hardware IR 不知道什么是卷积。
+“一层只降低一个维度”是指导原则，不是绝对禁令。目标信息可以参与高层候选选择，但不应泄漏为高层 IR 的指令级语义。例如 Tensor IR 可以知道目标偏好 NHWC，却不应出现 vfmacc。
 
-### 2.2 为什么不是 3 层或 7 层
+### 2.2 为什么区分 Tensor、Compute 和 Schedule
 
-**为什么 Tensor 和 Loop 要分开？**
+**Tensor IR 与 Compute/Loop IR 分开**，因为前者表达领域语义和图关系，后者表达一种具体算法的迭代与数据访问。同一个 conv2d 可以对应 direct convolution、implicit GEMM 或 Winograd；一旦展开为计算域，高层算子语义通常不可完整恢复。
 
-Tensor IR 表达的是算子间的关系（conv 的输出是 bias 的输入），是**数据依赖图**。Loop IR 表达的是单个算子的计算方式（用几重循环实现），是**执行方式**。这是两种不同的信息，混在一起会丢失结构。
+**Schedule Plan 与 Compute/Loop IR 分开**，因为计算定义和执行策略具有不同生命周期。一个计算定义可以生成多个 schedule 候选，Cost Model 需要在不复制或破坏原始 IR 的情况下评估这些候选。
 
-**为什么 Schedule 要从 Loop 中独立出来？**
+Schedule Plan 不是“另一份已经变形的循环”。它是作用于 payload IR 的变换程序或参数化计划。计划被选择并应用后，产生显式的 scheduled payload IR，后续 Hardware lowering 消费的是后者。
 
-Tiling 策略（tile 大小、循环重排、pipeline 深度）是**性能最敏感的决策**。把它独立出来，Cost Model 就有了一个清晰的介入点。如果 Schedule 和 Loop 混在一起，调优逻辑会散布在整个 lowering 流程中，无法系统化。
+建议优先复用 MLIR Transform Dialect 表达和执行计划，仅在上游接口不足时扩展自定义 transform op。这样可以避免重新设计 handle 生命周期、变换组合和失败传播。
 
-**为什么不再加更多层？**
+### 2.3 统一路径的边界
 
-抽象层的价值在于"语义差异足够大"。如果两层之间只是换个名字，那就不该分开。Tensor→Loop→Schedule→Hardware→LLVM 这五层，每一层之间都有质的差异，不存在冗余。
+目标主路径为：
 
-### 2.3 统一抽象路径
+~~~text
+Frontend Graph
+    -> Tensor IR
+    -> algorithm/decomposition candidates
+    -> Compute IR
+    -> schedule candidates
+    -> Scheduled Compute IR
+    -> Target-specific Hardware IR
+    -> Backend IR + Runtime ABI
+    -> Executable
+~~~
 
-同一个 lowering 管道，可以处理所有 DNN 算子：
+Conv2D、Matmul、Reduce 和部分 Attention 子图可在 Compute IR 汇合为结构化迭代、归约和数据搬运。但“所有 DNN 算子在 Loop IR 以下完全相同”并不成立，至少以下语义需要专门建模或推迟支持：
 
-```
-Conv2D ─┐
-Matmul ─┼──→ Tensor IR ──→ Loop IR ──→ Schedule IR ──→ Hardware IR ──→ LLVM IR
-Attn ───┤
-MoE ────┘
-Reduce ─┘
-```
+- 稀疏或间接索引
+- 数据依赖控制流和动态序列长度
+- 随机数、有状态算子和副作用
+- 跨设备通信与 collective
+- 异步执行、DMA 和显式同步
+- 具有特殊数值要求的归约、量化和 transcendental 运算
 
-算子到了 Loop IR 以下，就全部变成同一套原语：循环、访存、运算。Tensor IR 之上的差异被统一了。
+统一的是分析和决策框架，不是强行把不同执行模型压缩成同一组指令。
 
 ---
 
 ## 3. 总体架构
 
-```
-                         cuDNN Frontend / PyTorch FX / ONNX / ...
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        COST MODEL（贯穿全程）                        │
-│         ┌──────────┐    ┌──────────┐    ┌──────────┐               │
-│         │ Generate │ →  │ Estimate │ →  │  Choose  │               │
-│         │ 生成候选  │    │ 预估代价  │    │ 选择最优  │               │
-│         └──────────┘    └──────────┘    └──────────┘               │
-└─────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  Layer 1: TENSOR IR                    "算法是什么？"                 │
-│                                                                      │
-│  Op: conv2d, matmul, attention, reduce, elemwise, reshape, ...      │
-│  Graph: 数据依赖边，生产者-消费者关系                                   │
-│  Attr: 数据布局 (NCHW/NHWC), 数据类型 (f32/f16/i8), 问题维度          │
-│                                                                      │
-│  本层不做: tiling, 循环生成, 指令选择, 任何与硬件相关的决策              │
-└────────────────────────────────┬─────────────────────────────────────┘
-                                 │  --tensor-lower-to-loop
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  Layer 2: LOOP IR                       "如何计算？"                  │
-│                                                                      │
-│  结构: affine.for 循环嵌套, affine.load/store, affine.if             │
-│  表达: 访存模式 (连续/跨步/间接), 数据依赖距离, 循环边界               │
-│                                                                      │
-│  关键变换:                                                           │
-│  • conv2d → im2col + affine 循环 (算法选择在此步完成)                  │
-│  • matmul → 三重 affine 循环 (M,N,K)                                  │
-│  • attention → 多重循环 + softmax 展开                                │
-│                                                                      │
-│  本层不做: tile 划分, 循环重排, 并行标注                               │
-└────────────────────────────────┬─────────────────────────────────────┘
-                                 │  --loop-lower-to-schedule
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  Layer 3: SCHEDULE IR                   "如何组织计算？"              │
-│                                                                      │
-│  这是 Cost Model 发挥核心作用的层。                                    │
-│                                                                      │
-│  变换:                                                               │
-│  • tile(M, N, K)       — 将循环切分为 tile 和外层迭代                 │
-│  • reorder(i, j, k)    — 重排循环顺序以优化数据局部性                  │
-│  • pipeline(n)         — 插入软件流水线，隐藏访存延迟                  │
-│  • parallel(dim)       — 标注可并行的循环维度                          │
-│  • unroll(dim, factor) — 循环展开                                     │
-│  • vectorize(dim)      — 标注可向量化的循环                            │
-│  • memspace(tensor)    — 分配内存层级 (global/shared/register)        │
-│                                                                      │
-│  Cost Model 驱动决策：                                                │
-│  ┌─────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐        │
-│  │ 生成候选 │ →  │ 估算延迟  │ →  │ 比较选择  │ →  │ 应用变换  │        │
-│  │ Tile=64 │    │ Lat=120  │    │          │    │ Tile=128 │        │
-│  │ Tile=128│    │ Lat=90   │    │   ✓      │    │          │        │
-│  └─────────┘    └──────────┘    └──────────┘    └──────────┘        │
-└────────────────────────────────┬─────────────────────────────────────┘
-                                 │  --schedule-lower-to-hardware
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  Layer 4: HARDWARE IR                   "如何使用硬件？"              │
-│                                                                      │
-│  从 Hardware Description (YAML) 自动推导映射规则:                      │
-│                                                                      │
-│  Hardware Description              Hardware IR                       │
-│  ═══════════════════              ═══════════════                     │
-│  arch: rvv                        rvv.vle, rvv.vfmacc,              │
-│    vlen: 256                        rvv.vfredusum, ...               │
-│    sew: [8,16,32,64]                                                  │
-│    lmul: [1,2,4,8]                 ───→ 向量指令序列                   │
-│                                                                      │
-│  arch: tensor_core                 tile_load, tile_mma,              │
-│    mma: [16,16,16]                   tile_store, ...                 │
-│    sram: 128KB                                                       │
-│                                     ───→ 张量核指令序列                │
-│                                                                      │
-│  arch: simt                         threadIdx, blockIdx,             │
-│    warp_size: 32                      shfl_sync, ...                 │
-│    smem: 48KB                                                        │
-│                                     ───→ SIMT 指令序列                │
-└────────────────────────────────┬─────────────────────────────────────┘
-                                 │  --hardware-lower-to-llvm
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  Layer 5: LLVM IR                       "如何编码？"                  │
-│                                                                      │
-│  • @llvm.riscv.vle.nxv8f32, @llvm.riscv.vfmacc.nxv8f32 (RVV)       │
-│  • @llvm.nvvm.load, @llvm.nvvm.mma.sync (CUDA)                      │
-│  • <8 x float> fadd, fmul (x86 AVX)                                 │
-│                                                                      │
-│  → llc -mtriple=<target> → Machine Code                             │
-└──────────────────────────────────────────────────────────────────────┘
-```
+~~~text
+ cuDNN Frontend graph / PyTorch export / ONNX / textual MLIR
+                              |
+                              v
+ +------------------------------------------------------------------+
+ | Tensor IR                                                        |
+ | DNN semantics, shape/layout constraints, dtype, numerical policy |
+ +------------------------------+-----------------------------------+
+                                | generate legal decompositions
+                                v
+ +------------------------------------------------------------------+
+ | Compute IR                                                       |
+ | linalg/scf/affine/arith/tensor or a thin project abstraction     |
+ +------------------------------+-----------------------------------+
+                                | generate -> check -> estimate
+                                v
+ +--------------------------+   selected plan   +--------------------+
+ | Schedule Plan            | ----------------> | Scheduled Compute |
+ | Transform IR + metadata  |                   | explicit loops,    |
+ +--------------------------+                   | copies and vectors |
+                                                +---------+----------+
+                                                          |
+                       +----------------------------------+-----------+
+                       | Target profile + backend plugin              |
+                       | capabilities, constraints, calibrated costs |
+                       +----------------------------------+-----------+
+                                                          |
+                                                          v
+ +------------------------------------------------------------------+
+ | Hardware IR                                                      |
+ | vector/RVV, NVVM, target dialect, sync and memory-space semantics|
+ +------------------------------+-----------------------------------+
+                                |
+                                v
+ +------------------------------------------------------------------+
+ | Backend + Runtime                                                |
+ | LLVM dialect/IR or another backend, ABI, allocation, launch      |
+ +------------------------------+-----------------------------------+
+                                |
+                                v
+                  object / executable / device binary
+~~~
+
+### 3.1 数据面与决策面
+
+架构分成两条相互关联但不混合的路径：
+
+- **数据面**：承载计算语义并逐层 lowering 的 payload IR
+- **决策面**：生成候选、检查合法性、估算代价、选择并记录决策的 Schedule/Cost Model
+
+Cost Model 不直接修改 payload IR。它只对稳定的候选描述返回评估结果；变换执行器负责应用被选计划，verifier 负责验证结果。
+
+### 3.2 每个阶段的契约
+
+每个 lowering pass 必须声明：
+
+- 接受哪些 Dialect、op、类型和动态形状
+- 产出 IR 的合法 Dialect 集合
+- 需要哪些目标能力和数值语义前提
+- 保持哪些属性，允许放宽哪些属性
+- 失败是“候选不合法”“目标不支持”还是“编译器缺陷”
+- 是否存在语义等价的 fallback
+
+Dialect Conversion 的 legality 定义应成为实现契约的一部分。Pass 成功后不得静默残留未声明的非法 op。
+
+### 3.3 Lowering trace
+
+每次编译生成机器可读的 trace，至少包含：
+
+~~~yaml
+pipeline_version: 1
+input_fingerprint: "..."
+target_profile: "rvv-example@1"
+backend_version: "..."
+cost_model:
+  id: "analytical-v1"
+  calibration_id: "..."
+decisions:
+  - site: "conv2d_0"
+    candidates_generated: 12
+    candidates_legal: 7
+    selected: "tile_oc8_oh4_ow16"
+    objective: {latency_us: 41.2}
+    rejected:
+      - id: "tile_oc32_oh8_ow32"
+        reason: "working_set_exceeds_l1"
+~~~
+
+Trace 是调试、可视化和复现实验的共同数据源，不应依赖解析日志文本。
 
 ---
 
-## 4. Cost Model（一等公民）
+## 4. 各层详细设计
 
-### 4.1 不是"Lower 之后再调优"，而是"调优后再 Lower"
+### 4.1 Tensor IR：“计算语义是什么？”
 
-传统编译器的做法：
+Tensor IR 表达前端无关的 DNN 语义和图结构。早期可自定义薄层 Dialect，但应明确与 tensor、linalg 或其他上游 Dialect 的转换边界。
 
-```
-IR → Lower → 目标代码 → Benchmark → 不满意？ → 回退重来
-```
+**必须表达的内容**：
 
-OpenComputeFlow 的做法：
+- 算子语义及版本，如 matmul、conv2d、reduce、elementwise
+- ranked tensor、静态/动态维度和形状约束
+- 逻辑布局与物理布局；二者不能只用一个 NCHW/NHWC 字符串代替
+- 输入、输出、常量、可变状态和 alias/side-effect 信息
+- 存储类型、计算类型和累加类型
+- broadcasting、padding、group、stride、dilation 等算子属性
+- 量化参数的作用域、zero point、scale 和饱和/舍入规则
+- fast-math、NaN/Inf、确定性和允许误差等数值策略
 
-```
-IR → Generate candidates → Estimate each → Choose best → Lower
-```
+**本层变换**：
 
-Cost Model 不是一个事后优化 pass，而是**贯穿 lowering 全程的决策引擎**。
+- 形状推断、类型检查和约束传播
+- 常量折叠、canonicalization、CSE 等可复用上游优化
+- 语义合法的算子融合候选生成
+- layout 候选生成与 layout propagation
+- 算法 decomposition 候选生成
 
-### 4.2 Cost Model 的输入与输出
+融合和 layout 可以参考目标与 Cost Model，但选择结果必须保持 Tensor IR 声明的数值和副作用语义。目标相关的偏好不等于目标指令进入 Tensor IR。
+
+**阶段不变量**：
+
+- 每个 op 的 shape/type verifier 均通过
+- 动态维度的等式或范围约束没有被无依据地静态化
+- 广播、alias 和副作用顺序明确
+- 数值策略可沿 lowering 传递，不能在后续层丢失
+
+### 4.2 Compute/Loop IR：“计算如何展开？”
+
+Compute IR 描述选定算法的结构化计算，包括迭代域、索引映射、归约和数据访问。初期不建议创建一套重复 affine.for/load/store 的 Loop Dialect，应组合使用：
+
+- linalg：结构化计算和可变换的迭代语义
+- tensor：bufferization 前的值语义
+- scf：通用循环、动态边界和控制流
+- affine：只用于已证明满足 affine 约束的循环和索引
+- arith、math：标量计算
+- memref：bufferization 后的显式内存访问
+
+affine 不能表达一般的间接访问，浮点运算也应使用 arith.addf、arith.mulf 等，而不是不存在的 affine.addf。动态形状或非 affine 索引应保留在 scf/linalg，不能为了统一形式强行改写。
+
+算法选择发生在 Tensor IR 到 Compute IR 的边界：
+
+~~~text
+tensor.conv2d
+    |
+    +-- direct convolution --------> Compute candidate A
+    +-- implicit GEMM -------------> Compute candidate B
+    +-- Winograd (条件满足时) ------> Compute candidate C
+~~~
+
+候选生成器负责给出适用条件；合法性检查器先排除不满足 kernel、stride、dtype、workspace 或数值要求的候选；Cost Model 只比较合法候选。算法名及来源要保留在 trace 中，但无须作为低层执行语义永久存在。
+
+该图描述目标架构的算法候选机制；Phase 1 的 Conv2D MVP 只实例化 direct convolution，implicit GEMM 和 Winograd 不进入首阶段搜索空间。
+
+**阶段不变量**：
+
+- 迭代域覆盖完整且无非预期重叠
+- 归约 identity、结合/交换假设和累加类型明确
+- 边界、padding 和 tail 语义明确
+- 读写集合与 alias 分析一致
+- 尚未做目标指令选择
+
+### 4.3 Schedule Plan：“计算如何组织？”
+
+Schedule Plan 表达对 Compute IR 的变换意图：
+
+- tile、split、fuse、reorder
+- parallel、map-to-thread/block
+- vectorize、unroll
+- promotion、bufferization 和 memory-space placement
+- software pipeline、prefetch、double buffering
+- producer-consumer fusion 与计算位置
+
+Plan 应通过稳定 handle 引用 payload IR，并定义 handle 失效和失败传播规则。优先采用 MLIR Transform Dialect；项目自定义内容作为 Transform Dialect extension，而不是独立且互不兼容的调度系统。
+
+示意：
+
+~~~text
+Compute payload: structured direct-conv(...)
+
+Transform plan:
+  match direct-conv
+  tile [oc=8, oh=4, ow=16]
+  promote input/filter tiles when legal
+  vectorize output-width or output-channel dimension
+  apply canonicalization
+
+Materialized payload:
+  explicit tiled loops + subviews + copies + vector operations
+~~~
+
+Plan 本身不是 Hardware IR。应用计划后必须重新执行 verifier、内存容量检查和 Dialect legality 检查。若计划应用失败，该候选被标记为无效，不允许留下半变换状态继续编译。
+
+**候选生成顺序**：
+
+~~~text
+Generate
+  -> symbolic legality and shape guards
+  -> resource feasibility
+  -> analytical estimate
+  -> optional measured/learned refinement
+  -> choose
+  -> materialize on a fresh or rollback-capable payload
+  -> verify
+~~~
+
+MVP 应从规则约束下的枚举或 beam search 开始。模拟退火、遗传算法和 ML-based search 只有在搜索空间、基准集和编译预算明确后再引入。
+
+### 4.4 Hardware IR：“如何合法使用目标能力？”
+
+Hardware IR 表达目标族特有且不能由通用 vector/gpu 等 Dialect 完整承载的语义，例如：
+
+- RVV 的 scalable vector、VL、mask 和 tail policy
+- SIMT 的线程层级、barrier、address space 和 warp primitive
+- 矩阵加速器的 MMA shape、fragment layout 和 accumulator 约束
+- NPU 的 DMA、片上存储、事件和异步依赖
+
+Hardware Description 提供能力和约束，**backend plugin 提供语义 lowering**。两者缺一不可：
+
+~~~text
+Scheduled Compute IR
+    + Target Profile (declarative facts)
+    + Backend Plugin (rewrite/legalization code)
+    -> Hardware IR
+~~~
+
+当目标缺少某项能力时，处理顺序为：
+
+1. 使用已注册、经过验证的等价 expansion
+2. 回退到更通用的 IR 层并重新调度
+3. 若无合法路径，返回带上下文的“不支持”诊断
+
+不能根据 YAML 中的指令字符串猜测语义，也不能默认“连续 load + rearrange”总能等价替代 strided/gather 访问。
+
+### 4.5 Backend 与 Runtime：“如何形成可调用程序？”
+
+这一步不仅是机械编码，还包括：
+
+- MLIR Dialect 到 LLVM Dialect/LLVM IR、NVVM 或其他目标 IR 的转换
+- 数据布局、地址空间和 calling convention
+- memref/tensor descriptor ABI
+- host/device 边界、kernel launch 和同步
+- workspace 查询、分配与释放
+- 目标特征、链接、对象文件和可执行文件生成
+- 必要的 runtime library 调用
+
+寄存器分配和最终机器指令选择通常由 LLVM 等后端完成，不属于“LLVM IR 本身”。OpenComputeFlow 应尽量复用上游能力，但必须测试本项目产生的 ABI 和目标特征是否正确。
+
+---
+
+## 5. Cost Model 与搜索
+
+### 5.1 定位
+
+Cost Model 是决策引擎，不是正确性裁判。正确性和资源合法性由 verifier、约束检查和 backend legality 保证；Cost Model 只在合法候选之间排序。
+
+它也不是对实测调优的替代。合理闭环是：
+
+~~~text
+Generate -> Check -> Estimate -> Choose -> Lower -> Verify
+                                      |
+                                      +-> optional Measure -> Calibrate
+~~~
+
+### 5.2 输入与输出
 
 **输入**：
-- 问题维度（M, N, K 等）
-- 当前 IR 片段（Loop IR 或 Schedule IR）
-- Hardware Description（YAML）
+
+- 标准化 problem signature：shape、dtype、layout、数值策略
+- 候选的结构化特征：tile、循环序、访存、并行度、向量宽度
+- target profile 与 backend 版本
+- 资源使用估算：寄存器、片上内存、workspace、代码尺寸
+- 编译模式和预算：AOT/JIT、最大搜索时间、是否允许实测
 
 **输出**：
-- 预估延迟 / 吞吐 / 功耗
-- 用于在多个候选方案中选择最优
 
-### 4.3 Cost Model 在各层的应用
+~~~text
+Estimate {
+  status: ok | unavailable
+  objectives: {
+    latency_us,
+    throughput_items_per_s,
+    energy_mj,
+    code_size_bytes,
+    workspace_bytes
+  }
+  uncertainty: {kind, value}
+  assumptions: [...]
+  model_id
+  calibration_id
+}
+~~~
 
-| IR 层 | Cost Model 决策 | 候选搜索空间 |
+status 只表示模型能否对已经合法的候选给出估价，不重新裁定候选合法性。所有指标必须带单位。功耗、能耗和吞吐不能混为单个无量纲分数。
+
+### 5.3 目标与约束
+
+默认优化目标应由用户或部署配置明确指定，例如：
+
+- 最小化 p50 latency，约束 workspace <= 64 MiB
+- 最大化 throughput，约束功耗和数值误差
+- 在 latency 与 energy 的 Pareto frontier 中选择
+
+若多个候选预测差异小于模型误差或置信区间，应使用稳定 tie-breaker，例如更小 workspace、更少代码尺寸或更通用的 shape coverage，而不是宣称某候选确定最优。
+
+### 5.4 分层决策
+
+| 决策点 | 典型候选 | 必要的先验检查 |
 |---|---|---|
-| Tensor IR | 算子融合方案（conv+bias+act 是否融合） | 融合 vs 不融合，2 种 |
-| Loop IR | 算法选择（im2col+GEMM vs Winograd vs 直接） | 3-5 种算法 |
-| Schedule IR | Tile 大小、循环重排、Pipeline 深度 | 指数级搜索空间，核心调优层 |
-| Hardware IR | 指令序列选择（vfmacc vs vfmul+vfadd） | 2-5 种模式 |
+| Tensor | fusion、layout、decomposition | shape、数值语义、副作用、workspace |
+| Compute | direct/implicit GEMM/Winograd | 算法适用条件与参考等价性 |
+| Schedule | tile、reorder、vectorize、pipeline | 依赖、容量、寄存器、并行合法性 |
+| Hardware | 已注册 expansion/目标 op 选择 | target capability、类型和 mask/sync 语义 |
 
-### 4.4 Cost Model 的架构
+不要让同一决策在多层被独立做两次。上层选定的决定应以结构化 provenance 传入下层；若下层发现不可满足，应触发显式回退或重新搜索。
 
-```
-┌──────────────────────────────────────────┐
-│              Cost Model API              │
-│  estimate(ir, problem_dims, hw_desc)     │
-│      → {latency, throughput, energy}     │
-└────────────────┬─────────────────────────┘
-                 │
-     ┌───────────┼───────────┐
-     ▼           ▼           ▼
-┌─────────┐ ┌─────────┐ ┌─────────┐
-│  Micro-  │ │  Memory │ │  Compute│
-│  Bench   │ │  Model  │ │  Model  │
-│ (实测)   │ │ (分析)   │ │ (分析)   │
-└─────────┘ └─────────┘ └─────────┘
-```
+### 5.5 模型组成
 
-- **Micro-Benchmark**：测量真实硬件上的基础操作延迟（如单次 vfmacc、单次 shared memory load）
-- **Memory Model**：分析访存模式，估算 cache miss、bank conflict、带宽利用率
-- **Compute Model**：分析计算密度，估算计算单元利用率、流水线气泡
+~~~text
+                         +-------------------+
+Candidate features ----> | Cost Model API    | ----> estimate + uncertainty
+Target profile --------> | versioned         |
+                         +---------+---------+
+                                   |
+              +--------------------+--------------------+
+              |                    |                    |
+       Analytical Model     Calibration DB      Learned Model
+       compute/memory       microbenchmarks      optional later
+~~~
 
-早期可以用分析模型（Roofline + 简单线性模型），后期可接入真实的 micro-benchmark 数据。
+早期采用可解释的分析模型：
+
+- Roofline 只用于粗粒度上界，不能替代 cache、pipeline 和 occupancy 模型
+- Compute Model 估算关键资源吞吐与依赖链
+- Memory Model 估算各层级流量、重用、对齐和冲突
+- Overhead Model 覆盖 launch、同步、循环尾部和 setup 开销
+
+### 5.6 校准、缓存与在线选择
+
+校准数据必须绑定：
+
+- device/CPU 型号与可影响性能的固件或微架构标识
+- ISA feature、频率策略、线程数和内存配置
+- compiler/backend 版本与关键 flags
+- microbenchmark schema 和采集时间
+
+搜索结果缓存键至少包含 problem signature、动态 shape bucket、目标指纹、数值策略、pipeline 版本和 model/calibration ID。
+
+对于动态形状，支持三种策略：
+
+1. 生成覆盖合法范围的通用 schedule
+2. 按 shape bucket 生成多个版本并在运行时 dispatch
+3. 在 JIT 模式为新 shape 编译并缓存
+
+任何 runtime dispatch 都必须有覆盖全部合法输入的 fallback。
 
 ---
 
-## 5. Hardware Description（YAML 驱动）
+## 6. Hardware Description 与后端插件
 
-### 5.1 不绑定任何硬件
+### 6.1 Hardware Description 的职责
 
-传统做法：为每种硬件写单独的 lowering pass。
+Hardware Description 是版本化的 **Target Profile**，用于描述编译器可查询的事实：
 
-```
-RVV:  CIR → RVV Dialect → LLVM RVV Intrinsics
-ARM:  CIR → NEON Dialect → LLVM NEON Intrinsics
-x86:  CIR → AVX Dialect → LLVM x86 Intrinsics
-...
-```
+- ISA/执行模型和 feature
+- 数据类型、向量或 MMA shape 支持
+- 内存层级、容量、对齐、地址空间和 DMA 能力
+- 线程/核心拓扑与同步能力
+- backend 已注册的 lowering capability
+- 可选的性能参数与 calibration 引用
 
-问题：每增加一种硬件，需要新写一整套 dialect + lowering pass。N 种硬件 = N 套代码。
+它不负责定义指令语义、任意 rewrite 模板或 LLVM intrinsic 名称。语义 lowering 必须由经过测试的 backend plugin 实现。
 
-OpenComputeFlow 的做法：**用 YAML 描述硬件能力，编译器根据描述自动适配。**
+### 6.2 示例 Schema
 
-### 5.2 Hardware Description 格式
+以下是说明性示例，不是最终 schema：
 
-```yaml
-# hardware/riscv_v_vector.yaml
-name: "RISC-V Vector 1.0"
-arch: rvv
-version: "1.0"
+~~~yaml
+schema_version: 1
+target_id: "rvv-example"
+profile_version: 1
+backend: "rvv"
 
-pe:
-  vector_register_count: 32
-  vlen: 256              # bit (128/256/512/1024)
-  sew: [8, 16, 32, 64]   # supported element widths
-  lmul: [0.125, 0.25, 0.5, 1, 2, 4, 8]
-
-compute:
-  fma_latency: 5          # cycles
-  fma_throughput: 1       # ops/cycle/PE
-  mac_per_cycle: 8        # f32 MAC per cycle (VLEN=256, SEW=32 → 8 elements)
-  transcendental: false   # no hardware sigmoid/tanh/exp
+features:
+  isa: "riscv64"
+  extensions: ["v", "f", "d"]
+  vector:
+    scalable: true
+    vlen_bits:
+      mode: runtime
+      minimum: 128
+    element_widths: [8, 16, 32, 64]
+    lmul: ["mf8", "mf4", "mf2", "m1", "m2", "m4", "m8"]
+    supports_masked_ops: true
 
 memory:
+  cache_line_bytes: 64
   levels:
-    - name: global
-      type: ddr
-      size: 16GB
-      bandwidth: 50        # GB/s
-      latency: 200         # cycles
-    - name: shared
-      type: sram
-      size: 128KB
-      bandwidth: 512
-      latency: 5
-    - name: register
-      type: vector_register
-      size: 8KB            # 32 regs × 256-bit
-      bandwidth: 4096
-      latency: 1
+    - {name: "l1d", kind: "cache", size_bytes: 32768}
+    - {name: "l2", kind: "cache", size_bytes: 1048576}
+    - {name: "dram", kind: "external"}
+  minimum_alignment_bytes: 16
 
-instructions:
-  load:
-    unit_stride:    {op: "vle.v",   throughput: 1, latency: 5}
-    strided:        {op: "vlse.v",  throughput: 1, latency: 6}
-  store:
-    unit_stride:    {op: "vse.v",   throughput: 1, latency: 4}
-    strided:        {op: "vsse.v",  throughput: 1, latency: 5}
-  compute:
-    fadd:           {op: "vfadd.vv", throughput: 1, latency: 3}
-    fmul:           {op: "vfmul.vv", throughput: 1, latency: 3}
-    fmacc:          {op: "vfmacc.vv", throughput: 1, latency: 5}
-    fredsum:        {op: "vfredusum.vs", throughput: 1, latency: 8}
-  compare:
-    mflt:           {op: "vmflt.vv", throughput: 1, latency: 2}
-  merge:
-    vmerge:         {op: "vmerge.vvm", throughput: 1, latency: 2}
-```
+capabilities:
+  - "vector.load.unit_stride"
+  - "vector.load.strided"
+  - "vector.fma.f32"
+  - "vector.reduce.add.f32"
 
-### 5.3 支持的硬件类型
+calibration:
+  id: "rvv-example-latency-v1"
+~~~
 
-| 硬件类型 | 示例 | 核心特征 |
+RVV 的 VLEN 可以是运行时相关的 scalable 属性，不能无条件把 vlen: 256 当成所有目标的固定编译期常量。CPU cache 也不应被描述成 SIMT/NPU 风格的 shared memory，除非目标确实暴露了可显式管理的 SRAM。
+
+### 6.3 Backend Plugin 接口
+
+每个目标族至少实现：
+
+~~~text
+BackendPlugin {
+  id/version
+  validateTargetProfile(profile)
+  queryCapabilities()
+  checkCandidate(candidate, profile)
+  populateLoweringPatterns()
+  populateBackendConversion()
+  getRuntimeABI()
+}
+~~~
+
+Target Profile 变化分为两类：
+
+- **同一 backend family 内的变体**：例如不同 VLEN 下限、cache 容量或 MMA shape，通常可以通过替换 profile 适配
+- **新的执行模型或 ISA**：例如从 RVV 转到 SIMT，必须增加或复用对应 backend plugin
+
+因此项目承诺应是“在已支持的 backend family 内用 Target Profile 描述硬件变体”，而不是“换 YAML 即自动获得任意新后端”。
+
+### 6.4 Schema 治理
+
+- schema 必须有版本号和 JSON Schema/等价机器验证
+- 未知必填字段、单位错误和互相矛盾的 capability 必须报错
+- 性能提示与 correctness capability 分离，缺失性能数据不得改变合法性
+- backend 启动时校验 profile，不能在 lowering 中延迟暴露配置错误
+- profile 和 calibration 文件进入 lowering trace 的内容哈希
+
+---
+
+## 7. 正确性、失败处理与验证
+
+### 7.1 数值语义
+
+每个 Tensor op 都必须声明或继承：
+
+- 输入/输出存储类型与内部计算、累加类型
+- 浮点 contraction、reassociation 和 fast-math 策略
+- NaN/Inf、signed zero、溢出和饱和规则
+- reduction 顺序是否允许变化
+- 是否要求 bit-exact、确定性或误差容限
+
+算法和 schedule 候选只有在满足该策略时才合法。Winograd、低精度累加、FMA contraction 和并行 reduction 不能仅凭性能收益自动启用。
+
+### 7.2 动态形状与边界
+
+- 静态、符号和运行时维度使用统一 shape constraint 表达
+- tile 不能整除时必须定义 remainder loop、mask 或 padding 策略
+- vector tail 的 inactive lane 行为必须与目标 policy 一致
+- 运行时 guard 应显式进入 IR 和 trace
+- 零维、空 tensor、极小 shape 和超大 shape 必须有定义行为
+
+Phase 1 可以限制输入范围，但必须由 verifier 或入口检查明确拒绝范围外输入，不能产生未定义代码。
+
+### 7.3 Bufferization、内存与 Alias
+
+设计必须明确：
+
+- tensor value semantics 何时转换成 memref/buffer
+- buffer ownership、生命周期和释放责任
+- in-place bufferization 的 alias 前提
+- workspace 的大小、对齐、地址空间和查询接口
+- host/device 传输、异步 copy 和同步依赖
+- promotion 到快存储失败时的 fallback
+
+内存空间分配不是单纯 schedule 标签。它与 runtime allocation、地址空间转换、同步和容量检查共同构成可执行契约。
+
+### 7.4 失败分类
+
+| 类别 | 示例 | 处理 |
 |---|---|---|
-| `rvv` | RISC-V Vector | 向量寄存器，VLEN 可变，sew/lmul 可配 |
-| `simd` | ARM NEON, x86 AVX | 固定宽度 SIMD，128/256/512 bit |
-| `tensor_core` | NVIDIA Tensor Core | 矩阵乘法加速器，MMA 指令 |
-| `systolic` | Google TPU, 自研 NPU | 脉动阵列，权重驻留，数据流驱动 |
-| `simt` | CUDA cores, AMD CU | 线程束 (warp/wavefront)，共享内存 |
-| `dsp` | Hexagon, Cadence | VLIW/SIMD 混合，窄位宽优化 |
+| 输入无效 | shape/type/attribute 不满足 op 语义 | 前端诊断并停止 |
+| 候选不合法 | tile 超容量、依赖阻止并行 | 淘汰候选并记录原因 |
+| 目标不支持 | 缺少 dtype 或同步能力 | 尝试已验证 fallback，否则报错 |
+| 模型不可用 | 无 calibration、模型拒绝 shape | 使用保守模型/默认 schedule 并告警 |
+| 编译器缺陷 | pass 成功后残留非法 op | 失败并输出最小化所需上下文 |
 
-每种硬件一个 YAML 文件。**换硬件只需换 YAML，编译器自动调整 lowering 策略。**
+禁止静默改变 dtype、数值策略或结果布局以使 lowering 通过。
 
----
+### 7.5 测试矩阵
 
-## 6. 各层详细设计
+| 层次 | 测试方法 | 核心断言 |
+|---|---|---|
+| Dialect | parser/printer、verifier 单测 | round-trip 与非法输入诊断 |
+| Pass | LIT/FileCheck、pass failure test | 结构、legality 和不变量 |
+| 语义 | 与朴素参考实现 differential test | dtype/shape/边界/误差 |
+| Backend | LLVM verifier、目标汇编检查 | intrinsic、ABI、target feature |
+| 运行时 | emulator/真实设备端到端 | 结果、workspace、同步和错误 |
+| Cost Model | 预测对实测数据集 | 误差分布、排序准确率、回归 |
+| 性能 | 固定环境 benchmark | 相对 baseline、方差和显著性 |
 
-### 6.1 Tensor IR — "算法是什么？"
+随机测试应记录 seed；性能测试应记录 warm-up、采样次数、频率策略和环境指纹。
 
-**职责**：表达 DNN 计算的**全局语义**。不涉及任何执行细节。
+### 7.6 可复现性
 
-**表达的内容**：
-- **算子类型**：conv2d, matmul, attention, pooling, reduce, elemwise, reshape, ...
-- **算子参数**：kernel_size, stride, padding, dilation, groups
-- **数据流图**：张量之间的生产者-消费者关系
-- **数据属性**：shape, dtype (f32/f16/bf16/i8), layout (NCHW/NHWC/...)
-- **数值属性**：alpha, beta 等缩放因子
+一个可复现实验包至少包含：
 
-**本层关键变换**：
-- **算子融合**：检测 conv+bias+activation 序列，合并为 `fused_conv_bias_act`
-- **Layout 推断**：根据后续算子需求，为中间张量选择最优 layout
-
-**本层的"不"**：
-- 不做 tiling
-- 不做循环生成
-- 不做任何与硬件相关的决策
-- 不做常量折叠等通用优化（由上游 MLIR canonicalizer 完成）
-
-### 6.2 Loop IR — "如何计算？"
-
-**职责**：将每个算子展开为**具体的循环结构和访存模式**。算法选择在此层完成。
-
-**表达的内容**：
-- **循环结构**：`affine.for %i = 0 to N step 1`
-- **访存操作**：`affine.load %tensor[%i, %j]` / `affine.store %val → %tensor[%i, %j]`
-- **访存模式标注**：连续访问 / 跨步访问（stride）/ 间接访问（gather/scatter）
-- **数据依赖**：循环间的依赖距离（用于后续 pipeline 分析）
-- **计算操作**：`affine.addf`, `affine.mulf`, `affine.maxf` 等简单运算
-
-**算法选择示例**：
-
-```
-Tensor IR: conv2d(input=1×3×224×224, filter=64×3×7×7, stride=2, pad=3)
-                            │
-                            ▼  算法选择（此层完成）
-                            │
-        ┌───────────────────┼───────────────────┐
-        ▼                   ▼                   ▼
-  im2col + GEMM       Winograd F(2,3)        Direct Conv
-  (通用，kernel≤7)     (kernel=3,stride=1)     (depthwise)
-        │
-        ▼
-  Loop IR:
-    // im2col 展开
-    affine.for %n = 0 to 1
-      affine.for %h = 0 to 112
-        affine.for %w = 0 to 112
-          // 将 3×7×7 邻域展开为列向量
-          ...
-    // GEMM
-    affine.for %m = 0 to 64
-      affine.for %n = 0 to 12544
-        affine.for %k = 0 to 147
-          %a = affine.load %A[%m, %k]
-          %b = affine.load %B[%k, %n]
-          %c = affine.load %C[%m, %n]
-          %c = affine.addf %c, affine.mulf %a, %b
-          affine.store %c → %C[%m, %n]
-```
-
-**本层的"不"**：
-- 不做 tiling（循环切分由 Schedule IR 完成）
-- 不做循环重排（由 Schedule IR 完成）
-- 不做并行标注（由 Schedule IR 完成）
-- 不做指令选择（由 Hardware IR 完成）
-
-### 6.3 Schedule IR — "如何组织计算？"
-
-**职责**：这是**整个框架最重要的层**。在 Loop IR 的基础上，加入执行策略：
-
-- **Tile**：将大循环切分为适合硬件 cache/寄存器的小块
-- **Reorder**：重排循环顺序以优化数据局部性
-- **Pipeline**：插入软件流水线（双缓冲），隐藏访存延迟
-- **Parallel**：标注可并行的循环维度
-- **Unroll**：循环展开（包括完全展开和部分展开）
-- **Vectorize**：标注可向量化的内层循环
-- **MemSpace**：分配数据到内存层级（global/shared/register）
-
-**Cost Model 在此层深度介入**：
-
-```
-Schedule IR 搜索流程:
-┌────────────────────────────────────────────────────────┐
-│                                                        │
-│  Loop IR (三重循环 GEMM)                                │
-│       │                                                │
-│       ▼                                                │
-│  生成候选 Schedule:                                     │
-│    Candidate 1: tile(M=64,N=64,K=32), reorder(M,N,K)  │
-│    Candidate 2: tile(M=128,N=64,K=16), reorder(N,M,K) │
-│    Candidate 3: tile(M=32,N=128,K=64), reorder(K,M,N) │
-│    ...  (共 N 个候选)                                   │
-│       │                                                │
-│       ▼                                                │
-│  Cost Model 估算每个候选:                                │
-│    C1: latency=120, mem_traffic=2.1MB, power=4.3W     │
-│    C2: latency=90,  mem_traffic=1.8MB, power=3.9W  ✓  │
-│    C3: latency=145, mem_traffic=2.5MB, power=4.8W     │
-│       │                                                │
-│       ▼                                                │
-│  选择 Candidate 2，应用到 IR                            │
-│                                                        │
-└────────────────────────────────────────────────────────┘
-```
-
-**搜索空间**：tile 大小、循环顺序、展开因子、pipeline 深度。这是一个组合优化问题。早期可以用启发式搜索（模拟退火/遗传算法），后期可接入 ML-based 搜索。
-
-**Schedule IR 的输出**：
-
-```
-// 输入 Loop IR:
-affine.for %m = 0 to 64
-  affine.for %n = 0 to 12544
-    affine.for %k = 0 to 147
-      ...
-
-// 输出 Schedule IR:
-schedule.tile (%m, %n, %k) into (%m_tile=64, %n_tile=128, %k_tile=16)
-schedule.reorder (%k_tile, %m, %n, %k_inner)
-schedule.memspace %A_tile → shared, %B_tile → shared, %C_tile → register
-schedule.pipeline depth=2 (%A_tile_load, %B_tile_load)
-schedule.vectorize %n_inner
-```
-
-### 6.4 Hardware IR — "如何使用硬件？"
-
-**职责**：将 Schedule IR 映射到**具体的硬件指令**。从 Hardware Description (YAML) 自动推导映射规则。
-
-**映射生成逻辑**：
-
-```
-Schedule IR 操作          →    硬件能力 (来自 YAML)    →    Hardware IR 指令
-═════════════════════          ════════════════════        ══════════════════
-schedule.vectorize(dim)   +    arch: rvv, sew: 32     →    rvv.vle / rvv.vfmacc
-                                                             / rvv.vse 序列
-
-schedule.pipeline(depth)  +    dma: 2, sram: 128KB    →    双缓冲 load/store
-                                                             交替指令序列
-
-affine.load(stride=LD)    +    has_strided_load: true  →    rvv.vlse
-                          +    has_strided_load: false →    rvv.vle + manual stride
-                                                             (降级为多步操作)
-```
-
-**关键设计**：当硬件不支持某个特性时，自动降级。例如硬件没有 strided load，则用连续 load + rearrange 替代。
-
-**与 cudnn-rvv-mlir 的关系**：cudnn-rvv-mlir 的 RVV dialect 是这个层的一个具体实现。短期可以复用 RVV dialect 作为 RVV 后端的 Hardware IR 实现，长期用 Hardware Description 自动生成。
-
-### 6.5 LLVM IR — "如何编码？"
-
-这层不再做任何架构决策。纯粹的编码转换：
-
-```
-RVV:  rvv.vfmacc %a, %b, %c  →  @llvm.riscv.vfmacc.nxv8f32(%a, %b, %c)
-CUDA: tile_mma %a, %b, %c     →  @llvm.nvvm.mma.sync.aligned.m16n8k16...
-x86:  vec.fma %a, %b, %c      →  <8 x float> @llvm.x86.avx512.vfmadd...
-```
-
-这一层占整体代码量的不到 20%。
+- 输入 IR 或其内容哈希
+- pipeline 配置和 pass 参数
+- target profile 与 calibration 哈希
+- 编译器、LLVM/MLIR、backend plugin 版本
+- 候选集合、选择结果和随机 seed
+- 目标代码哈希
+- 参考结果、实测数据与环境信息
 
 ---
 
-## 7. 项目目录结构
+## 8. Runtime 与部署模型
 
-```
+### 8.1 编译模式
+
+- **AOT**：为约定 shape 或 shape bucket 生成目标文件/设备二进制
+- **JIT**：根据运行时 shape 和设备 profile 编译并缓存
+- **Hybrid**：AOT 通用 fallback + JIT/离线调优的专用版本
+
+Phase 1 只要求 AOT，但公共接口不能假定所有 shape 都是编译期常量。
+
+### 8.2 Kernel ABI
+
+最小 ABI 需要规定：
+
+- 参数顺序、标量宽度和 calling convention
+- tensor/memref descriptor 的 layout
+- shape、stride、offset 和 alignment 的传递方式
+- workspace 查询与传入方式
+- 状态码和诊断信息
+- 线程、stream/context 或设备句柄
+
+ABI 必须版本化，并有 C/C++ 侧端到端测试。不能只验证生成的 LLVM IR 能通过 parser。
+
+### 8.3 编译缓存与 Dispatch
+
+缓存键和 runtime guard 必须与 Cost Model 使用的 shape bucket、target fingerprint 和数值策略一致。加载缓存项时重新验证 ABI 版本和目标兼容性；不兼容项视为 miss，不能继续执行。
+
+---
+
+## 9. 建议的项目目录
+
+目录按“语义、变换、决策、目标、运行时、验证”划分。下面是提议结构，不代表文件已经存在：
+
+~~~text
 OpenComputeFlow/
-├── README.md
+├── include/opencomputeflow/
+│   ├── Dialect/
+│   │   └── Tensor/
+│   ├── Transform/
+│   ├── CostModel/
+│   ├── Target/
+│   └── Runtime/
+├── lib/
+│   ├── Dialect/
+│   │   └── Tensor/
+│   ├── Transform/
+│   │   ├── Decompose/
+│   │   ├── Schedule/
+│   │   └── Lowering/
+│   ├── CostModel/
+│   ├── Target/
+│   │   ├── RVV/
+│   │   └── Profiles/
+│   ├── Runtime/
+│   └── Trace/
+├── tools/
+│   ├── ocf-opt/
+│   ├── ocf-compile/
+│   └── ocf-benchmark/
+├── runtime/
+├── test/
+│   ├── Dialect/
+│   ├── Transform/
+│   ├── CostModel/
+│   ├── Target/
+│   └── E2E/
+├── benchmark/
 ├── docs/
-│   └── DESIGN_ZH.md                    ← 本文档
-│
-├── frontend/                           # 前端入口
-│   ├── cudnn_frontend/                 # cuDNN Frontend API → Tensor IR
-│   └── pytorch_frontend/               # PyTorch FX → Tensor IR (未来)
-│
-├── ir/                                 # 四层 IR 定义（核心模块）
-│   ├── tensor_ir/                      # Tensor IR: 算子语义 + 数据依赖图
-│   │   ├── TensorOps.td               # MLIR TableGen 定义
-│   │   ├── TensorDialect.cpp
-│   │   └── TensorTypes.cpp
-│   ├── loop_ir/                        # Loop IR: Affine 循环 + 访存模式
-│   │   ├── LoopOps.td
-│   │   ├── LoopDialect.cpp
-│   │   └── LoopAnalysis.cpp           # 依赖距离分析
-│   ├── schedule_ir/                    # Schedule IR: Tile/Pipeline/Reorder
-│   │   ├── ScheduleOps.td
-│   │   ├── ScheduleDialect.cpp
-│   │   └── ScheduleTransform.cpp      # 变换施加逻辑
-│   └── hardware_ir/                    # Hardware IR: 硬件指令序列
-│       ├── HardwareOps.td
-│       └── HardwareDialect.cpp
-│
-├── transform/                          # Lowering Passes（将上层 IR 降为下层 IR）
-│   ├── tensor_to_loop/                 # Tensor IR → Loop IR
-│   │   ├── AlgorithmSelect.cpp        # 算法选择
-│   │   ├── ConvToImplicitGemm.cpp     # 卷积展开
-│   │   └── TensorToLoop.cpp
-│   ├── loop_to_schedule/               # Loop IR → Schedule IR
-│   │   ├── TileCandidateGen.cpp       # 候选生成
-│   │   ├── ScheduleSelect.cpp         # Cost-Model 驱动选择
-│   │   └── LoopToSchedule.cpp
-│   ├── schedule_to_hardware/           # Schedule IR → Hardware IR
-│   │   ├── InstructionSelect.cpp      # 从 Hardware Description 推导
-│   │   └── ScheduleToHardware.cpp
-│   ├── fusion/                         # 算子融合（Tensor IR 层）
-│   │   └── FusionPlan.cpp
-│   └── hardware_to_llvm/               # Hardware IR → LLVM IR
-│       └── HardwareToLLVM.cpp
-│
-├── cost_model/                         # Cost Model（一等公民）
-│   ├── CostEstimator.h                # API: estimate(ir, dims, hw) → {lat, bw, energy}
-│   ├── CostEstimator.cpp
-│   ├── MemoryModel.cpp                # 访存分析
-│   ├── ComputeModel.cpp               # 计算分析
-│   ├── MicroBenchmark.cpp             # 微基准数据采集
-│   └── Roofline.cpp                   # Roofline 模型
-│
-├── hardware/                           # 硬件描述与后端
-│   ├── descriptions/                   # YAML 硬件描述文件
-│   │   ├── riscv_v_vector.yaml
-│   │   ├── riscv_v_vector_vlen1024.yaml
-│   │   ├── arm_neon_v8.yaml
-│   │   ├── arm_sve.yaml
-│   │   ├── x86_avx512.yaml
-│   │   ├── nvidia_sm80.yaml
-│   │   └── generic_systolic.yaml
-│   ├── hw_parser/                      # YAML 解析 + 能力查询 API
-│   │   ├── HardwareDescription.h
-│   │   ├── HardwareDescription.cpp
-│   │   └── InstructionDB.h            # 指令表：按硬件 + 操作查询
-│   └── backends/                       # 各后端特化实现（如需要）
-│       ├── riscv_vector/
-│       ├── arm_neon/
-│       └── cuda/
-│
-├── backend/
-│   └── llvm/                            # LLVM IR 发射（薄层）
-│       └── LLVMEmitter.cpp
-│
-├── visualizer/                          # IR 可视化（调试 + 研究用）
-│   ├── IRGraphViewer.cpp              # 各层 IR 图形化
-│   ├── LoweringTraceViewer.cpp        # Lowering 过程回放
-│   └── CostLandscapeViewer.cpp        # Cost Model 搜索空间可视化
-│
-├── benchmark/                           # 性能基准
-│   ├── kernels/                        # 标准测试 kernel
-│   │   ├── gemm_bench.cpp
-│   │   ├── conv2d_bench.cpp
-│   │   └── attention_bench.cpp
-│   └── runner/                         # 运行器
-│       └── BenchmarkRunner.cpp
-│
-└── test/                                # 测试
-    ├── lit/                             # MLIR LIT 测试
-    │   ├── tensor_ir/
-    │   ├── loop_ir/
-    │   ├── schedule_ir/
-    │   └── hardware_ir/
-    └── unit/                            # C++ 单元测试
-```
+└── cmake/
+~~~
 
-你会发现，LLVM 相关代码 (<10 个文件) 占比不到 20%。
+设计取舍：
+
+- 初期仅在确有领域语义时创建 Tensor Dialect
+- Compute IR 优先复用上游 Dialect，不预设独立 Loop Dialect
+- Schedule 基于 Transform Dialect extension
+- Hardware Dialect 按目标族组织，不制造“硬件无关的具体指令”这一矛盾概念
+- backend plugin、Target Profile 和 Runtime ABI 放在同一目标契约下测试
 
 ---
 
-## 8. 与 cudnn-rvv-mlir 的关系
+## 10. 与 cudnn-rvv-mlir 的关系
 
-```
-OpenComputeFlow                        cudnn-rvv-mlir
-═══════════════                        ═══════════════
-                                       
-Tensor IR (新)                          CDF Dialect (骨架)
-    │                                       │
-Loop IR (新)                             CIR Dialect (骨架)
-    │                                       │
-Schedule IR (新)                        (无对应，内嵌在 lowering 里)
-    │                                       │
-Hardware IR (新)    ───对接───→          RVV Dialect (成熟 ✓)
-    │                                       │
-LLVM IR                                  LLVM IR
-```
+当前相邻 cudnn-rvv-mlir 工程可提供 RVV Dialect 与 RVV 到 LLVM 的已有实现；CDF、CIR 及其 lowering 仍处于骨架或未接入构建状态。因此集成策略应基于明确接口，而不是假定所有层已经成熟。
+
+~~~text
+OpenComputeFlow                         cudnn-rvv-mlir
+
+Tensor/Compute/Schedule
+        |
+Scheduled vector/target intent
+        |
+RVV backend adapter  ---------------->  RVV Dialect
+                                          |
+                                          v
+                                      RVV -> LLVM
+~~~
 
 **短期策略**：
-- cudnn-rvv-mlir 的 RVV dialect + RVV→LLVM lowering 保持，继续完善
-- OpenComputeFlow 的上层 IR (Tensor→Loop→Schedule→Hardware) 新开发
-- Hardware IR 通过 adapter 对接 cudnn-rvv-mlir 的 RVV dialect
+
+- 将 cudnn-rvv-mlir 的 RVV 路径视为可复用 backend 候选
+- 先建立 adapter 与版本化接口，不复制 CDF/CIR 骨架
+- 用端到端测试验证 RVV op、scalable vector、mask/VL 和 ABI 语义
+- 在依赖方式确定前，避免直接引用其内部 C++ 类型作为公共 API
 
 **长期策略**：
-- 当 Hardware Description 框架成熟后，Hardware IR 可以替代 cudnn-rvv-mlir 的 RVV 方言
-- cudnn-rvv-mlir 转为"单后端的成熟实现参考"，OpenComputeFlow 承接全部上层抽象
+
+- 上游 vector/LLVM 能直接表达的能力优先复用上游
+- 目标特有且稳定的语义保留在 RVV backend plugin
+- Hardware Description 负责选择和约束 backend，不替代 Dialect 的语义定义
+- 是否合并、依赖或淘汰 cudnn-rvv-mlir，由维护成本、测试覆盖和上游兼容性决定，不预先写死
 
 ---
 
-## 9. 路线图
+## 11. 路线图与验收门槛
 
-### Phase 1：核心 IR 定义 + 单后端打通（当前 ~ 6 个月）
+路线图采用能力门槛，不使用缺少人力和硬件前提的固定月份承诺。
 
-**目标**：Tensor IR → Loop IR → Schedule IR → Hardware IR (RVV) → LLVM IR → 跑出第一个 GEMM
+### MVP Conv2D 契约
 
-- [ ] 定义 Tensor IR dialect（conv, matmul, elemwise, reduce）
-- [ ] 实现 Tensor IR → Loop IR lowering（im2col+GEMM 路径）
-- [ ] 定义 Loop IR dialect（affine.for, affine.load/store）
-- [ ] 定义 Schedule IR dialect（tile, reorder, pipeline, vectorize, memspace）
-- [ ] 实现简单的分析型 Cost Model（Roofline + 线性模型）
-- [ ] 实现 Schedule IR → Hardware IR lowering（对接 cudnn-rvv-mlir 的 RVV dialect）
-- [ ] 实现 Hardware IR → LLVM IR（复用 cudnn-rvv-mlir）
-- [ ] **里程碑：GEMM 端到端跑通，Cost Model 能自动选择 tile 大小**
+第一个端到端闭环以 Conv2D 为唯一领域算子，并主动限制语义范围：
 
-### Phase 2：Cost Model 强化 + 多算法支持（6-12 个月）
+| 项目 | MVP 约束 |
+|---|---|
+| 模式 | forward inference |
+| 数据类型 | input、filter、output 和 accumulator 均为 f32 |
+| 布局 | input/output 为连续 NCHW，filter 为连续 OIHW |
+| Tensor shape | input=[N,C,H,W]、filter=[OC,C,KH,KW]、output=[N,OC,OH,OW] |
+| 形状约束 | N、C、H、W、OC、KH、KW 均为正的编译期常量 |
+| 参数 | groups=1、dilation=1；stride_h/stride_w 和四侧 padding 为编译期常量 |
+| 算法 | 仅 direct convolution |
+| 融合 | 不含 bias、activation 或其他 post-op |
+| 执行 | AOT、单线程、单 RVV 目标 |
 
-**目标**：Cost Model 能驱动算法选择，支持 Winograd
+输出空间维度遵循：
 
-- [ ] Cost Model 接入 micro-benchmark 数据
-- [ ] 实现 Winograd F(2,3) 算法路径（Loop IR 层）
-- [ ] 实现算子融合 pass（CDF 层 conv+bias+act）
-- [ ] Schedule IR 搜索空间扩展（支持更多循环重排策略）
-- [ ] **里程碑：同一卷积，Cost Model 自动在 im2col 和 Winograd 之间选择**
+~~~text
+OH = floor((H + pad_top + pad_bottom - KH) / stride_h) + 1
+OW = floor((W + pad_left + pad_right - KW) / stride_w) + 1
 
-### Phase 3：多硬件后端（12-18 个月）
+Y[n, oc, oh, ow] =
+  sum(ic, kh, kw,
+      padded_X[n, ic, oh * stride_h + kh, ow * stride_w + kw]
+      * filter[oc, ic, kh, kw])
+~~~
 
-**目标**：换 YAML 就能换硬件
+这里采用深度学习框架常见的 cross-correlation 语义，filter 不翻转，归约初值为 f32 零。Tensor verifier 必须检查 stride 为正、padding 非负、输入通道与 filter 通道一致，并且 OH、OW 为正。padding 区域按零值处理。算法候选、动态 shape、group/depthwise、dilation、量化和融合留到后续阶段。
 
-- [ ] Hardware Description (YAML) 完整定义 + 解析器
-- [ ] ARM NEON 后端（向量化 backend）
-- [ ] x86 AVX-512 后端
-- [ ] CUDA/NVPTX 后端（SIMT 模型）
-- [ ] **里程碑：同一份 Tensor IR，三套 YAML，三个后端均能跑通 GEMM**
+### Phase 0：契约与基础设施
 
-### Phase 4：可视化 + Benchmark 完善（18-24 个月）
+**范围**：
 
-**目标**：成为真正的"研究平台"
+- 明确支持的 MLIR/LLVM 版本和依赖方式
+- 定义最小 Tensor op：conv2d，并实现 MVP 契约 verifier
+- 确定 Compute IR 复用 linalg/scf/vector 的路径
+- 实现 Target Profile schema、解析和校验
+- 定义 lowering trace schema
+- 建立 parser/verifier/LIT 和 C++ 单测框架
 
-- [ ] IR 可视化工具（Lowering trace viewer）
-- [ ] Cost landscape 可视化
-- [ ] 标准 Benchmark 套件（GEMM, Conv2D, Attention, MoE）
-- [ ] 与 hand-tuned kernel 的性能对比报告
-- [ ] **里程碑：能向社区展示一份完整的"从 API 到汇编"的 lowering 追踪**
+**验收**：
+
+- conv2d Tensor IR 可 parse/print round-trip
+- 非法 shape、layout、dtype 和卷积参数有稳定诊断
+- 示例 Target Profile 可通过 schema 与 backend 校验
+- CI 能运行基础测试
+
+### Phase 1：单后端最小闭环
+
+**范围**：
+
+- f32 direct Conv2D：Tensor -> Linalg/Compute -> Schedule -> RVV -> LLVM
+- 一个明确的 RVV target profile
+- AOT kernel ABI 和 host runner
+- baseline schedule + 至少两组合法的 OC/OH/OW tile 候选
+- 静态 shape 与非整除 tail；动态 shape 在入口明确拒绝
+- 分析型 Cost Model 与结构化 trace
+
+**验收**：
+
+- 在 emulator 或指定 RVV 环境执行正确
+- 至少覆盖 3x3/stride1/pad1、7x7/stride2/pad3，以及不能整除 tile 或 VL 的输出宽度
+- 对零维、通道不匹配、非正输出维度、非法 rank/layout/dtype 明确拒绝
+- 与朴素 direct-conv 参考实现在声明误差内一致
+- Cost Model 能输出候选、单位、选择原因和预测误差
+- 从输入、配置到目标代码和实测结果可复现
+
+### Phase 2：稳健性与多算法卷积
+
+**范围**：
+
+- 动态 shape bucket、runtime guard 和缓存
+- microbenchmark calibration 与模型误差报告
+- 增加 implicit GEMM，与 MVP direct convolution 形成两条合法路径
+- fusion/layout 候选与 bufferization/workspace 契约
+- 失败回退和诊断完善
+
+**验收**：
+
+- Cost Model 只在满足数值、workspace 和 target 约束的算法间选择
+- 未见过的 shape 落到通用 fallback
+- 预测排序在固定验证集上优于规则 baseline
+- 缓存失配和 ABI 不兼容不会执行旧代码
+
+Winograd 在 Phase 2 后单独立项；先完成适用条件、数值误差和 workspace 评估，再进入候选集合。
+
+### Phase 3：第二个后端族
+
+**范围**：
+
+- 优先增加另一个 CPU vector backend（如 x86 或 Arm），验证通用 Compute/Schedule 抽象
+- 分离共用 vector lowering 与目标专用 legality
+- 比较同一 Tensor IR 在两个 target profile 上的不同 schedule
+
+**验收**：
+
+- 两个 backend 共享前端和候选框架，不共享错误的 ISA 假设
+- 同 family 的硬件变体只需 profile；新 ISA 通过 plugin 接入
+- 两端均完成正确性、ABI、trace 和性能回归
+
+SIMT/CUDA 是不同执行模型，应在 CPU vector 双后端稳定后作为独立阶段设计，而不是仅增加第三份 YAML。
+
+### Phase 4：研究平台能力
+
+**范围**：
+
+- lowering trace 与 cost landscape 可视化
+- Conv2D、GEMM、Reduce、Attention 子图 benchmark
+- 多目标/Pareto 搜索与可插拔模型
+- 与 vendor library、上游编译器和 hand-tuned kernel 比较
+
+**验收**：
+
+- 报告同时展示正确性、编译时间、运行性能和预测误差
+- 可视化直接读取结构化 trace
+- 新模型可通过稳定 API 接入并在固定数据集评估
 
 ---
 
-## 10. 设计哲学总结
+## 12. 关键决策与风险
 
-### 10.1 这个项目的核心不是 LLVM
+### 12.1 实现前必须关闭的决策
 
-LLVM 只占项目不到 20% 的代码量。OpenComputeFlow 的核心价值在于：
+| 决策 | 建议默认值 | 原因 |
+|---|---|---|
+| 第一前端 | textual Tensor IR + 最小 C++ builder | 先隔离前端 API 复杂度 |
+| 第一算子 | 受限 f32 direct Conv2D | 对齐项目目标，并覆盖布局、padding、stride、归约和 tail |
+| Compute 表达 | linalg + scf/affine | 复用成熟变换基础设施 |
+| Schedule 表达 | Transform Dialect extension | 明确 plan 与 payload |
+| 第一目标 | 一台确定的 RVV 设备或 emulator | profile 和实测必须有基准 |
+| 集成方式 | RVV adapter + 固定版本 | 降低相邻工程内部变化影响 |
+| 编译模式 | AOT | 先关闭 JIT/cache/runtime 变量 |
 
-1. **IR 分层的边界定义** — 为什么这样分，而不是那样分
-2. **Cost Model 驱动的决策** — 不让 lowering 是硬编码规则
-3. **Hardware Description 的解耦** — 算法与硬件描述的分离
-4. **Lowering 过程的可解释性** — 每一步都知道"为什么这样做"
+### 12.2 主要风险与缓解
 
-### 10.2 判断一个设计决策是否正确的标准
+| 风险 | 影响 | 缓解 |
+|---|---|---|
+| 自研 IR 与上游能力重叠 | 维护成本高、转换冗余 | 新增 Dialect 前写语义差异说明 |
+| Schedule 只是注释而非可执行计划 | 无法验证和复现 | 使用 Transform IR 并测试 materialization |
+| YAML 被当作后端代码生成器 | 语义不完整、错误 fallback | Target Profile + backend plugin 分工 |
+| Cost Model 越过合法性 | 选出快但错误的候选 | verifier/constraint 先于 estimate |
+| 仅验证 IR 文本 | ABI 或运行结果错误 | 端到端 differential test |
+| Conv MVP 同时引入多算法、融合和动态 shape | MVP 长期无法闭环 | Phase 1 固定 direct、f32、静态 shape 和单一布局 |
+| 路线图过早覆盖 Attention/MoE/CUDA | 后续阶段失焦 | 先通过 Conv2D 单算子阶段门槛 |
+| 相邻 RVV 工程接口不稳定 | 集成反复返工 | adapter、版本锁定、契约测试 |
 
-每当你考虑某个模块应该放在哪一层时，问自己：
+---
 
-> **这个信息在这一层能回答什么问题？这个问题的答案在下层还有意义吗？**
+## 13. 设计原则总结
 
-如果一个问题在某一层回答之后，下层不需要再重新思考——抽象边界就是对的。如果下层仍然需要携带这个信息做二次决策，说明抽象边界需要调整。
+1. **语义优先**：lowering 可以改变表示，不能静默改变计算契约。
+2. **合法性先于性能**：Cost Model 只比较合法候选。
+3. **计划与结果分离**：Schedule Plan 可搜索、可记录，应用后产生显式 payload IR。
+4. **能力描述与语义实现分离**：Target Profile 描述事实，backend plugin 实现 lowering。
+5. **保守失败**：无合法 expansion 时明确报错或回退，不猜测等价实现。
+6. **复用上游**：只有在 DNN 或目标语义确有缺口时新增 Dialect。
+7. **端到端验收**：parser 通过不等于正确，生成 LLVM IR 也不等于可调用。
+8. **可解释且可复现**：每个选择都有结构化依据、版本和环境指纹。
 
-### 10.3 这个项目证明的不是"我会 MLIR"
+判断一个抽象是否值得独立成层，可以问：
 
-而是：
+> 这一层是否拥有稳定且独特的语义、不变量和消费者？如果移除它，是否会迫使两个不同问题耦合？
 
-> **"我理解计算是如何跨越 API、IR、调度、硬件，一步步落地执行的；我还能设计这条路径中的抽象和边界。"**
-
-对于 AI 芯片架构方向来说，这种能力比"会用一个框架"重要得多。
+如果答案是否定的，应优先使用已有 Dialect、interface 或普通数据结构，而不是新增一层 IR。
 
 ---
 
 ## 附录 A：与 MLIR 上游组件的关系
 
-OpenComputeFlow 构建在 MLIR 之上，但有自己的设计哲学：
-
-| 组件 | 使用 MLIR 上游？ | 备注 |
+| OpenComputeFlow 概念 | 优先复用的 MLIR 组件 | 自研边界 |
 |---|---|---|
-| Tensor IR | 自研 dialect | 比 linalg 更高层，带 DNN 专用语义 |
-| Loop IR | 基于 `affine` dialect 扩展 | 复用上游 loop 基础设施 |
-| Schedule IR | 自研 dialect | 上游无对应。这是核心创新层 |
-| Hardware IR | 自研 dialect | 上游无对应。类似 cudnn-rvv-mlir 但硬件无关 |
-| Cost Model | 自研 | 上游无完整的 Cost Model 框架 |
-| LLVM IR | 100% 上游 | 不做任何修改 |
-| Visualizer | 自研 | 研究和调试工具 |
+| Tensor IR | Builtin/Tensor、可转换到 Linalg | DNN 专用语义、数值与 layout contract |
+| Compute IR | Linalg、SCF、Affine、Arith、Math | 必要时提供薄 op/interface |
+| Schedule Plan | Transform Dialect | 项目特有的候选参数与 transform extension |
+| Scheduled Compute | Linalg/SCF/Affine/Vector/MemRef | provenance 与目标约束属性 |
+| Hardware IR | Vector、GPU、NVVM、LLVM 及目标 Dialect | 上游不能表达的目标语义 |
+| Lowering | Pattern Rewrite、Dialect Conversion、Pass Manager | 项目 pipeline 与 legality |
+| Backend | LLVM Dialect/LLVM IR translation 等 | backend plugin、ABI 和 runtime glue |
+| 测试 | LIT、FileCheck、LLVM verifier | differential、benchmark、trace 校验 |
+
+相关上游设计参考：
+
+- [MLIR Transform Dialect](https://mlir.llvm.org/docs/Dialects/Transform/)
+- [MLIR Linalg Dialect](https://mlir.llvm.org/docs/Dialects/Linalg/)
+- [MLIR Vector Dialect](https://mlir.llvm.org/docs/Dialects/Vector/)
+- [MLIR Dialect Conversion](https://mlir.llvm.org/docs/DialectConversion/)
+- [MLIR LLVM IR Target](https://mlir.llvm.org/docs/TargetLLVMIR/)
 
 ---
 
-## 附录 B：为什么"不绑定 RISC-V 但是用 MLIR"
+## 附录 B：阶段不变量检查表
 
-MLIR 是基础设施，不是目标。它提供了：
-
-- 方言定义框架（TableGen）
-- Pass 管理器和 Pattern Rewriting
-- 内置的 `func`/`arith`/`scf`/`affine`/`memref` 等通用方言
-- LIT 测试框架
-
-但这些是工具，不是项目的价值所在。项目的价值在于**在这些工具之上构建的抽象层次和决策逻辑**。RISC-V 只是一个后端目标——换一个 YAML，就可以换一个目标。
+| 边界 | 必须检查 |
+|---|---|
+| Frontend -> Tensor | op 版本、shape/type/layout、数值策略、副作用 |
+| Tensor -> Compute | decomposition 适用条件、归约语义、边界与 workspace |
+| Compute -> Schedule | 依赖、动态 guard、资源约束、候选 provenance |
+| Plan -> Scheduled Compute | handle/变换成功、payload verifier、容量与 legality |
+| Scheduled Compute -> Hardware | capability、mask/tail、地址空间、同步和类型 |
+| Hardware -> Backend | ABI、data layout、target feature、非法 op 清零 |
+| Backend -> Executable | verifier、链接、运行时符号、目标兼容性 |
+| Executable -> Result | 参考结果、误差策略、确定性、性能采样环境 |
