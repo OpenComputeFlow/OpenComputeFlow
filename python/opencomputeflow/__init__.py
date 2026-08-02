@@ -6,6 +6,7 @@ from .contracts import (
     MappingCandidate,
     TargetProfile,
 )
+from .evidence import CompilationTrace, DecisionRecord, Measurement, RejectedCandidate
 from .performance import PerformanceEstimate, estimate_direct_conv
 from .reference import direct_conv2d
 
@@ -15,6 +16,10 @@ __all__ = [
     "MappingCandidate",
     "TargetProfile",
     "PerformanceEstimate",
+    "CompilationTrace",
+    "DecisionRecord",
+    "Measurement",
+    "RejectedCandidate",
     "direct_conv2d",
     "estimate_direct_conv",
 ]

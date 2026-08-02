@@ -208,9 +208,11 @@ PYTHONPATH=python python3 tools/ocf_phase0.py
 - [x] Phase 0A：direct Conv f32 reference
 - [x] Phase 0A：未校准 analytical estimate 与可运行样例
 - [x] Phase 0A：首批自动化测试
-- [ ] Phase 0A：补全所有非法 dtype/layout/dilation 和 provenance negative tests
-- [ ] Phase 0B：JSON Schema、golden fixtures、Measurement 与 Trace
+- [x] Phase 0A：非法 dtype/layout/dilation、资源和 provenance negative tests
+- [x] Phase 0B：六类 artifact 的 JSON Schema 与 negative tests
+- [x] Phase 0B：Measurement、DecisionRecord、CompilationTrace 与字段隔离
+- [x] Phase 0B：canonical fingerprint 规则与 golden fingerprint
 - [ ] Phase 0B：最小 C++ reader 与跨语言 round-trip
 - [ ] Phase 0C：锁定 MLIR 工具链并建立 CMake/LIT 工程
 
-下一步固定为 Phase 0B，先完成机器可读 schema 和 evidence trace，不提前进入 Dialect 开发。
+下一步固定为 Phase 0B 的最小 C++ reader。它通过 golden fingerprint 后，再进入 Phase 0C 的 MLIR/CMake/LIT 工程，不提前开发 Dialect op。

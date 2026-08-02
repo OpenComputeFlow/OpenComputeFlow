@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import math
 from typing import Any, Dict, Mapping
 
-from .contracts import ContractError, Conv2DContract, MappingCandidate, TargetProfile
+from .contracts import ContractError, Conv2DContract, MappingCandidate, TargetProfile, content_fingerprint
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,10 @@ class PerformanceEstimate:
             "confidence": self.confidence,
             "assumptions": list(self.assumptions),
         }
+
+    @property
+    def fingerprint(self) -> str:
+        return content_fingerprint(self.to_dict())
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "PerformanceEstimate":

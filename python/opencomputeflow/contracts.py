@@ -23,7 +23,7 @@ def _canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
-def _fingerprint(value: Any) -> str:
+def content_fingerprint(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
@@ -212,7 +212,7 @@ class Conv2DContract:
 
     @property
     def fingerprint(self) -> str:
-        return _fingerprint(self.to_dict())
+        return content_fingerprint(self.to_dict())
 
     def work_summary(self) -> Dict[str, Any]:
         n, channels, height, width = self.input_shape
@@ -330,7 +330,7 @@ class TargetProfile:
 
     @property
     def fingerprint(self) -> str:
-        return _fingerprint(self.to_dict())
+        return content_fingerprint(self.to_dict())
 
 
 @dataclass(frozen=True)
@@ -401,7 +401,7 @@ class MappingCandidate:
 
     @property
     def fingerprint(self) -> str:
-        return _fingerprint(self.to_dict())
+        return content_fingerprint(self.to_dict())
 
     def tile_working_set_by_tensor_bytes(self, contract: Conv2DContract) -> Dict[str, int]:
         tile_oc = min(self.tiles["oc"], contract.filter_shape[0])

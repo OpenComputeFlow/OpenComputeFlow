@@ -12,7 +12,14 @@ import sys
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "python"))
 
-from opencomputeflow import Conv2DContract, MappingCandidate, TargetProfile, estimate_direct_conv  # noqa: E402
+from opencomputeflow import (  # noqa: E402
+    CompilationTrace,
+    Conv2DContract,
+    DecisionRecord,
+    MappingCandidate,
+    TargetProfile,
+    estimate_direct_conv,
+)
 
 
 def main() -> int:
@@ -41,12 +48,30 @@ def main() -> int:
         },
     )
     estimate = estimate_direct_conv(contract, candidate, target)
+    decision = DecisionRecord(
+        site="conv2d_0",
+        candidates_generated=(candidate.fingerprint,),
+        candidates_legal=(candidate.fingerprint,),
+        selected_ref=candidate.fingerprint,
+        estimate_refs={candidate.fingerprint: estimate.fingerprint},
+    )
+    trace = CompilationTrace(
+        trace_id="phase0-reference",
+        input_fingerprint=contract.fingerprint,
+        target_profile_ref=target.target_ref,
+        target_profile_fingerprint=target.fingerprint,
+        backend_version="reference-only",
+        cost_model_id=estimate.model_id,
+        calibration_id=None,
+        decisions=(decision,),
+    )
     print(json.dumps({
         "contract": contract.to_dict(),
         "contract_fingerprint": contract.fingerprint,
         "target": target.to_dict(),
         "candidate": candidate.to_dict(),
         "estimate": estimate.to_dict(),
+        "trace": trace.to_dict(),
     }, indent=2, sort_keys=True))
     return 0
 

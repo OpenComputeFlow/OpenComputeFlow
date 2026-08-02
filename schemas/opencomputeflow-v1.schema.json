@@ -1,0 +1,487 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opencomputeflow.org/schema/opencomputeflow-v1.schema.json",
+  "title": "OpenComputeFlow Phase 0 contracts",
+  "oneOf": [
+    {"$ref": "#/$defs/conv2dContract"},
+    {"$ref": "#/$defs/targetProfile"},
+    {"$ref": "#/$defs/mappingCandidate"},
+    {"$ref": "#/$defs/performanceEstimate"},
+    {"$ref": "#/$defs/measurement"},
+    {"$ref": "#/$defs/compilationTrace"}
+  ],
+  "$defs": {
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "positiveShape4": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {"type": "integer", "minimum": 1}
+    },
+    "conv2dContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "op",
+        "input_shape",
+        "filter_shape",
+        "output_shape",
+        "strides",
+        "padding",
+        "dilation",
+        "groups",
+        "input_layout",
+        "filter_layout",
+        "output_layout",
+        "input_dtype",
+        "filter_dtype",
+        "output_dtype",
+        "accumulation_dtype",
+        "mode",
+        "algorithm",
+        "post_ops",
+        "numerical_policy"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "op": {"const": "conv2d"},
+        "input_shape": {"$ref": "#/$defs/positiveShape4"},
+        "filter_shape": {"$ref": "#/$defs/positiveShape4"},
+        "output_shape": {"$ref": "#/$defs/positiveShape4"},
+        "strides": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"type": "integer", "minimum": 1}
+        },
+        "padding": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {"type": "integer", "minimum": 0}
+        },
+        "dilation": {
+          "type": "array",
+          "prefixItems": [{"const": 1}, {"const": 1}],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "groups": {"const": 1},
+        "input_layout": {"const": "NCHW"},
+        "filter_layout": {"const": "OIHW"},
+        "output_layout": {"const": "NCHW"},
+        "input_dtype": {"const": "f32"},
+        "filter_dtype": {"const": "f32"},
+        "output_dtype": {"const": "f32"},
+        "accumulation_dtype": {"const": "f32"},
+        "mode": {"const": "forward_inference"},
+        "algorithm": {"const": "direct"},
+        "post_ops": {"type": "array", "maxItems": 0},
+        "numerical_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "allow_fma_contraction",
+            "allow_reassociation",
+            "deterministic",
+            "absolute_tolerance",
+            "relative_tolerance"
+          ],
+          "properties": {
+            "allow_fma_contraction": {"type": "boolean"},
+            "allow_reassociation": {"type": "boolean"},
+            "deterministic": {"type": "boolean"},
+            "absolute_tolerance": {"type": "number", "minimum": 0},
+            "relative_tolerance": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "targetProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "target_id",
+        "profile_version",
+        "backend",
+        "features",
+        "resources",
+        "performance",
+        "capabilities"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "target_id": {"type": "string", "minLength": 1},
+        "profile_version": {"type": "integer", "minimum": 1},
+        "backend": {"type": "string", "minLength": 1},
+        "features": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["isa", "supported_dtypes", "topology_dimensions", "vector"],
+          "properties": {
+            "isa": {"type": "string", "minLength": 1},
+            "supported_dtypes": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "topology_dimensions": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "vector": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["scalable", "element_widths", "vectorizable_axes", "supports_masked_ops"],
+              "properties": {
+                "scalable": {"type": "boolean"},
+                "element_widths": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {"type": "integer", "minimum": 1}
+                },
+                "vectorizable_axes": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {"enum": ["oc", "oh", "ow", "ic", "kh", "kw"]}
+                },
+                "supports_masked_ops": {"type": "boolean"}
+              }
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind"],
+            "properties": {
+              "kind": {"type": "string", "minLength": 1},
+              "capacity_bytes": {"type": "integer", "minimum": 1},
+              "explicitly_managed": {"type": "boolean"}
+            }
+          }
+        },
+        "performance": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "f32_flops_per_cycle": {"type": "number", "exclusiveMinimum": 0},
+            "memory_bandwidth_bytes_per_cycle": {"type": "number", "exclusiveMinimum": 0},
+            "overhead_cycles_per_tile": {"type": "number", "exclusiveMinimum": 0},
+            "model_confidence": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "mappingCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "candidate_id",
+        "compute_contract_ref",
+        "target_profile_ref",
+        "target_profile_fingerprint",
+        "algorithm",
+        "loop_order",
+        "tiles",
+        "vectorize_axis",
+        "vector_length",
+        "tail_policy",
+        "memory_residency",
+        "parallel_binding",
+        "decomposition_provenance"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "candidate_id": {"type": "string", "minLength": 1},
+        "compute_contract_ref": {"$ref": "#/$defs/fingerprint"},
+        "target_profile_ref": {"type": "string", "minLength": 1},
+        "target_profile_fingerprint": {"$ref": "#/$defs/fingerprint"},
+        "algorithm": {"const": "direct"},
+        "loop_order": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {"enum": ["n", "oc", "oh", "ow", "ic", "kh", "kw"]}
+        },
+        "tiles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["oc", "oh", "ow"],
+          "properties": {
+            "oc": {"type": "integer", "minimum": 1},
+            "oh": {"type": "integer", "minimum": 1},
+            "ow": {"type": "integer", "minimum": 1}
+          }
+        },
+        "vectorize_axis": {
+          "oneOf": [
+            {"type": "null"},
+            {"enum": ["oc", "oh", "ow", "ic", "kh", "kw"]}
+          ]
+        },
+        "vector_length": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "integer", "minimum": 1}
+          ]
+        },
+        "tail_policy": {"enum": ["masked", "scalar_epilogue", "padded"]},
+        "memory_residency": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "filter", "output"],
+          "properties": {
+            "input": {"type": "string", "minLength": 1},
+            "filter": {"type": "string", "minLength": 1},
+            "output": {"type": "string", "minLength": 1}
+          }
+        },
+        "parallel_binding": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"enum": ["n", "oc", "oh", "ow", "ic", "kh", "kw"]},
+          "additionalProperties": {"type": "string", "minLength": 1}
+        },
+        "decomposition_provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "source_operator_ref"],
+          "properties": {
+            "name": {"const": "direct"},
+            "source_operator_ref": {"$ref": "#/$defs/fingerprint"}
+          }
+        }
+      }
+    },
+    "performanceEstimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "model_id",
+        "candidate_ref",
+        "flops",
+        "traffic_bytes",
+        "decomposition",
+        "latency_cycles",
+        "predicted_bottleneck",
+        "confidence",
+        "assumptions"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "model_id": {"type": "string", "minLength": 1},
+        "candidate_ref": {"$ref": "#/$defs/fingerprint"},
+        "flops": {"type": "integer", "minimum": 0},
+        "traffic_bytes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "filter", "output"],
+          "properties": {
+            "input": {"type": "integer", "minimum": 0},
+            "filter": {"type": "integer", "minimum": 0},
+            "output": {"type": "integer", "minimum": 0}
+          }
+        },
+        "decomposition": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["compute_cycles", "memory_cycles", "overhead_cycles"],
+          "properties": {
+            "compute_cycles": {"type": "number", "minimum": 0},
+            "memory_cycles": {"type": "number", "minimum": 0},
+            "overhead_cycles": {"type": "number", "minimum": 0}
+          }
+        },
+        "latency_cycles": {"type": "number", "minimum": 0},
+        "predicted_bottleneck": {"enum": ["compute", "memory", "balanced"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "assumptions": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "measurement_id",
+        "candidate_ref",
+        "target_profile_fingerprint",
+        "source_kind",
+        "metric",
+        "unit",
+        "collected_at",
+        "warmup_runs",
+        "samples",
+        "summary",
+        "environment"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "measurement_id": {"type": "string", "minLength": 1},
+        "candidate_ref": {"$ref": "#/$defs/fingerprint"},
+        "target_profile_fingerprint": {"$ref": "#/$defs/fingerprint"},
+        "source_kind": {"enum": ["real_hardware", "cycle_accurate_model"]},
+        "metric": {"enum": ["latency_cycles", "latency_us"]},
+        "unit": {"enum": ["cycles", "us"]},
+        "collected_at": {"type": "string", "format": "date-time"},
+        "warmup_runs": {"type": "integer", "minimum": 0},
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "number", "minimum": 0}
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "median", "p90", "max"],
+          "properties": {
+            "min": {"type": "number", "minimum": 0},
+            "median": {"type": "number", "minimum": 0},
+            "p90": {"type": "number", "minimum": 0},
+            "max": {"type": "number", "minimum": 0}
+          }
+        },
+        "environment": {
+          "type": "object",
+          "required": ["device_id", "backend_version", "clock_policy", "threads"],
+          "properties": {
+            "device_id": {"type": "string", "minLength": 1},
+            "backend_version": {"type": "string", "minLength": 1},
+            "clock_policy": {"type": "string", "minLength": 1},
+            "threads": {"type": "integer", "minimum": 1}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"metric": {"const": "latency_cycles"}}},
+          "then": {"properties": {"unit": {"const": "cycles"}}}
+        },
+        {
+          "if": {"properties": {"metric": {"const": "latency_us"}}},
+          "then": {"properties": {"unit": {"const": "us"}}}
+        }
+      ]
+    },
+    "compilationTrace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "trace_id",
+        "pipeline_version",
+        "input_fingerprint",
+        "target_profile_ref",
+        "target_profile_fingerprint",
+        "backend_version",
+        "cost_model",
+        "decisions",
+        "measurement_refs"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "trace_id": {"type": "string", "minLength": 1},
+        "pipeline_version": {"type": "integer", "minimum": 1},
+        "input_fingerprint": {"$ref": "#/$defs/fingerprint"},
+        "target_profile_ref": {"type": "string", "minLength": 1},
+        "target_profile_fingerprint": {"$ref": "#/$defs/fingerprint"},
+        "backend_version": {"type": "string", "minLength": 1},
+        "cost_model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "calibration_id"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "calibration_id": {
+              "oneOf": [
+                {"type": "null"},
+                {"type": "string", "minLength": 1}
+              ]
+            }
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "site",
+              "candidates_generated",
+              "candidates_legal",
+              "selected_ref",
+              "estimate_refs",
+              "rejected"
+            ],
+            "properties": {
+              "site": {"type": "string", "minLength": 1},
+              "candidates_generated": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/fingerprint"}
+              },
+              "candidates_legal": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {"$ref": "#/$defs/fingerprint"}
+              },
+              "selected_ref": {"$ref": "#/$defs/fingerprint"},
+              "estimate_refs": {
+                "type": "object",
+                "minProperties": 1,
+                "propertyNames": {"$ref": "#/$defs/fingerprint"},
+                "additionalProperties": {"$ref": "#/$defs/fingerprint"}
+              },
+              "rejected": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["candidate_ref", "reason_code", "detail"],
+                  "properties": {
+                    "candidate_ref": {"$ref": "#/$defs/fingerprint"},
+                    "reason_code": {"type": "string", "minLength": 1},
+                    "detail": {"type": "string", "minLength": 1}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "measurement_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/fingerprint"}
+        }
+      }
+    }
+  }
+}
