@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "target_id": "rvv-example",
+  "profile_version": 1,
+  "backend": "rvv",
+  "features": {
+    "isa": "riscv64",
+    "supported_dtypes": ["f32"],
+    "topology_dimensions": ["single_thread"],
+    "vector": {
+      "scalable": true,
+      "element_widths": [32],
+      "vectorizable_axes": ["ow", "oc"],
+      "supports_masked_ops": true
+    }
+  },
+  "resources": {
+    "register": {"kind": "register"},
+    "l1d": {"kind": "cache", "capacity_bytes": 32768},
+    "external": {"kind": "external_memory"}
+  },
+  "performance": {
+    "f32_flops_per_cycle": 8.0,
+    "memory_bandwidth_bytes_per_cycle": 16.0,
+    "overhead_cycles_per_tile": 8.0,
+    "model_confidence": 0.0
+  },
+  "capabilities": [
+    "vector.f32",
+    "vector.masked_f32",
+    "vector.fma.f32"
+  ]
+}

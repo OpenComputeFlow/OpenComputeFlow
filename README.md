@@ -39,6 +39,24 @@ OpenComputeFlow 是一个面向 AI 算子的软硬件映射研究框架。它位
 
 完整架构、MVP 契约、阶段门槛和风险分析见 [中文设计文档](docs/DESIGN_ZH.md)。
 
+## 当前实现
+
+仓库已开始 Phase 0A，提供零第三方依赖的契约参考路径：
+
+- 受限 f32 direct Conv2D 语义、shape 推导和参考实现
+- 版本化 RVV Target Profile 与 Mapping Candidate legality
+- compute/memory/overhead 分解的未校准分析估算
+- contract、mapping 和 estimate 的可运行 JSON 示例
+
+运行测试和示例：
+
+~~~bash
+PYTHONPATH=python python3 -m unittest discover -s tests -v
+PYTHONPATH=python python3 tools/ocf_phase0.py
+~~~
+
+分阶段任务、测试要求和退出门槛见 [开发计划](docs/DEVELOPMENT_PLAN_ZH.md)。
+
 ## 路线图
 
 - **Phase 0**：定义 Conv2D Compute、Mapping、Target 和 Evidence 契约
