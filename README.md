@@ -4,39 +4,48 @@
   <img src="assets/opencomputeflow-icon.png" width="180" alt="OpenComputeFlow project icon">
 </p>
 
-> **An Experimental AI Compute Architecture Framework**
+> **An Operator-to-Architecture Co-design Framework**
 >
-> *Exploring explainable and measurable lowering from DNN semantics to hardware execution.*
+> *Making AI operator-to-hardware mapping explicit, explainable, and measurable.*
 
 ## 项目简介
 
-OpenComputeFlow 是一个研究 DNN 计算如何逐步映射到硬件的实验框架，重点关注 IR 抽象边界、可执行调度计划、Cost Model、目标能力建模，以及 lowering 的可解释性与可复现性。
+OpenComputeFlow 是一个面向 AI 算子的软硬件映射研究框架。它位于算子语义与硬件执行之间，研究一个算子应如何分解、调度、放置数据并映射到目标架构，以及为什么选择这种映射。
 
-项目当前处于设计阶段。首个 MVP 是受限的 f32 direct Conv2D：
+项目不以复刻 TVM、XLA 或通用 MLIR 编译栈为目标。MLIR/LLVM 和生成 kernel 是验证手段，核心产物是三类可复用、可比较的契约：
+
+- **AI Compute Contract**：描述算子语义、计算模式、数据访问和可调度维度
+- **Hardware Mapping Contract**：描述计算、存储、通信资源及映射约束与决策
+- **Performance Evidence**：用分析模型、校准数据和实测解释候选的性能差异
+
+项目当前处于设计阶段。首个 MVP 是受限的 f32 direct Conv2D，用一个算子打通 Operator -> Architecture 的最小研究闭环：
 
 - 静态 shape，input/output 使用 NCHW，filter 使用 OIHW
 - groups=1、dilation=1，stride 和 padding 为编译期常量
 - AOT、单线程、单 RVV 目标
-- Tensor -> Compute -> Schedule -> RVV -> LLVM 端到端闭环
+- 输出至少两组合法 Mapping Candidate，记录选择与淘汰原因
+- 分解 compute、memory、tail/overhead 代价并与实测比较
+- 通过 RVV -> LLVM -> executable 验证映射可执行且结果正确
 
 ## 设计原则
 
 - **语义优先**：lowering 不得静默改变计算、数值或布局契约
+- **映射是一等公民**：算法、tile、布局、内存放置和并行映射必须结构化表达
 - **合法性先于性能**：Cost Model 只比较已经合法的候选
-- **计划与结果分离**：Schedule Plan 被选择和应用后生成显式 payload IR
-- **能力与实现分离**：Target Profile 描述硬件，backend plugin 实现语义 lowering
+- **预测必须可校准**：每个性能结论都应能追溯到假设、目标参数或实测数据
+- **能力与实现分离**：Target Profile 描述硬件事实，backend plugin 验证映射可执行
 - **优先复用上游**：复用 MLIR Linalg、SCF、Affine、Vector 和 Transform Dialect
-- **端到端验收**：验证 ABI、运行结果、预测误差和复现信息，不只检查 IR 文本
+- **kernel 是验证手段**：端到端代码生成用于检验抽象，不以建设通用编译器为目标
 
 完整架构、MVP 契约、阶段门槛和风险分析见 [中文设计文档](docs/DESIGN_ZH.md)。
 
 ## 路线图
 
-- **Phase 0**：Conv2D 语义契约、Target Profile、trace 与测试基础设施
-- **Phase 1**：f32 direct Conv2D 在 RVV 上端到端运行
-- **Phase 2**：动态 shape、校准 Cost Model、implicit GEMM 与融合/layout 候选
-- **Phase 3**：第二个 CPU vector backend
-- **Phase 4**：可视化、可插拔模型与标准 benchmark
+- **Phase 0**：定义 Conv2D Compute、Mapping、Target 和 Evidence 契约
+- **Phase 1**：在 RVV 上完成可解释、可测量的 direct Conv2D 映射闭环
+- **Phase 2**：校准性能模型，扩展算法、layout、fusion 和 shape 候选
+- **Phase 3**：映射到具有不同内存或并行模型的第二类架构
+- **Phase 4**：扩展 GEMM/Attention，并形成可复用的软硬件协同实验平台
 
 ## 仓库状态
 
