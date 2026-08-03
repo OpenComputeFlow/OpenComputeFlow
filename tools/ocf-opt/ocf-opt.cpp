@@ -12,7 +12,6 @@
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Config/llvm-config.h"
-#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace {
@@ -30,7 +29,6 @@ void printVersion() {
 } // namespace
 
 int main(int argc, char **argv) {
-  llvm::InitLLVM initLLVM(argc, argv);
   if (isVersionRequest(argc, argv)) {
     printVersion();
     return 0;
