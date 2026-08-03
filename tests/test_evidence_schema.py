@@ -20,14 +20,10 @@ except ImportError:
 from opencomputeflow import (  # noqa: E402
     CompilationTrace,
     ContractError,
-    Conv2DContract,
     DecisionRecord,
-    MappingCandidate,
     Measurement,
-    RejectedCandidate,
-    TargetProfile,
-    estimate_direct_conv,
 )
+from phase0_fixture import build_phase0_fixture  # noqa: E402
 
 
 SCHEMA_PATH = REPO_ROOT / "schemas" / "opencomputeflow-v1.schema.json"
@@ -38,62 +34,9 @@ GOLDEN_FINGERPRINTS_PATH = REPO_ROOT / "tests" / "golden" / "phase0-fingerprints
 class EvidenceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.target = TargetProfile.from_json(PROFILE_PATH)
-        cls.contract = Conv2DContract(input_shape=(1, 3, 8, 16), filter_shape=(8, 3, 3, 3))
-        cls.candidate = MappingCandidate(
-            candidate_id="conv_ow16",
-            compute_contract_ref=cls.contract.fingerprint,
-            target_profile_ref=cls.target.target_ref,
-            target_profile_fingerprint=cls.target.fingerprint,
-            decomposition_provenance={
-                "name": "direct",
-                "source_operator_ref": cls.contract.fingerprint,
-            },
-        )
-        cls.estimate = estimate_direct_conv(cls.contract, cls.candidate, cls.target)
-        cls.measurement = Measurement(
-            measurement_id="rvv-board-a-run-1",
-            candidate_ref=cls.candidate.fingerprint,
-            target_profile_fingerprint=cls.target.fingerprint,
-            source_kind="real_hardware",
-            metric="latency_cycles",
-            unit="cycles",
-            collected_at="2026-08-02T00:00:00+08:00",
-            samples=(4600.0, 4550.0, 4580.0, 4570.0, 4560.0),
-            warmup_runs=10,
-            environment={
-                "device_id": "rvv-board-a",
-                "backend_version": "rvv-adapter-dev",
-                "clock_policy": "fixed",
-                "threads": 1,
-            },
-        )
-        rejected_ref = "a" * 64
-        cls.decision = DecisionRecord(
-            site="conv2d_0",
-            candidates_generated=(cls.candidate.fingerprint, rejected_ref),
-            candidates_legal=(cls.candidate.fingerprint,),
-            selected_ref=cls.candidate.fingerprint,
-            estimate_refs={cls.candidate.fingerprint: cls.estimate.fingerprint},
-            rejected=(
-                RejectedCandidate(
-                    candidate_ref=rejected_ref,
-                    reason_code="unsupported_vector_axis",
-                    detail="target profile does not allow vectorization of kh",
-                ),
-            ),
-        )
-        cls.trace = CompilationTrace(
-            trace_id="phase0-example-trace",
-            input_fingerprint=cls.contract.fingerprint,
-            target_profile_ref=cls.target.target_ref,
-            target_profile_fingerprint=cls.target.fingerprint,
-            backend_version="rvv-adapter-dev",
-            cost_model_id=cls.estimate.model_id,
-            calibration_id=None,
-            decisions=(cls.decision,),
-            measurement_refs=(cls.measurement.fingerprint,),
-        )
+        fixture = build_phase0_fixture(REPO_ROOT)
+        for name, value in fixture.items():
+            setattr(cls, name, value)
 
     def test_measurement_summary_and_round_trip(self) -> None:
         self.assertEqual(self.measurement.summary, {"min": 4550.0, "median": 4570.0, "p90": 4600.0, "max": 4600.0})

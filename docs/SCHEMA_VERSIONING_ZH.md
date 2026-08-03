@@ -18,9 +18,11 @@ v1 使用 SHA-256：
 
 1. 对完整 `to_dict()` 结果按 key 递归排序
 2. JSON 使用 UTF-8、ASCII escaping、无额外空白，分隔符为 `,` 和 `:`
-3. 对所得字节计算小写十六进制 SHA-256
+3. integer 使用十进制；数值为整数的 float 也规范化为 integer 文本；其余 float 使用最短往返表示；`-0.0` 规范化为 `0`
+4. NaN 与 Inf 不是合法 contract 数字，fingerprint 计算必须拒绝
+5. 对所得字节计算小写十六进制 SHA-256
 
-Python 参考实现位于 `content_fingerprint`。跨语言 reader 必须通过 `tests/golden/phase0-fingerprints-v1.json`，才能宣称实现 v1 指纹兼容。
+Python 参考实现位于 `content_fingerprint`，C++ 参考 reader 位于 `tools/ocf-contract-check`。跨语言 reader 必须通过 `tests/golden/phase0-fingerprints-v1.json`，才能宣称实现 v1 指纹兼容。
 
 内容指纹不是版本号的替代：版本说明如何解释字段，指纹说明消费的是否为完全相同的内容。
 

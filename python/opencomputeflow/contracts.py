@@ -6,6 +6,7 @@ import copy
 from dataclasses import dataclass, field
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
@@ -20,7 +21,32 @@ class ContractError(ValueError):
 
 
 def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ContractError("non-finite numbers cannot be fingerprinted")
+        if value == 0.0:
+            return "0"
+        if value.is_integer():
+            return str(int(value))
+        return repr(value).lower()
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise ContractError("canonical JSON object keys must be strings")
+        return "{" + ",".join(
+            _canonical_json(key) + ":" + _canonical_json(value[key])
+            for key in sorted(value)
+        ) + "}"
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_canonical_json(item) for item in value) + "]"
+    raise ContractError(f"unsupported canonical JSON value: {type(value).__name__}")
 
 
 def content_fingerprint(value: Any) -> str:

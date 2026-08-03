@@ -48,6 +48,7 @@ OpenComputeFlow 是一个面向 AI 算子的软硬件映射研究框架。它位
 - compute/memory/overhead 分解的未校准分析估算
 - Contract、Mapping、Estimate、Measurement 和 Trace v1 JSON Schema
 - 预测与实测严格分离的 Evidence Trace，以及稳定 golden fingerprint
+- 基于 LLVM Support 的 C++ reader 与 Python/C++ canonical SHA-256 一致性测试
 - contract、mapping、estimate 和 trace 的可运行 JSON 示例
 
 核心参考测试不需要第三方依赖；完整 Schema 测试需要开发依赖：
@@ -56,6 +57,10 @@ OpenComputeFlow 是一个面向 AI 算子的软硬件映射研究框架。它位
 python3 -m pip install -r requirements-dev.txt
 PYTHONPATH=python python3 -m unittest discover -s tests -v
 PYTHONPATH=python python3 tools/ocf_phase0.py
+cmake -S . -B build -G Ninja \
+  -DLLVM_DIR=/path/to/llvm/lib/cmake/llvm
+cmake --build build
+ctest --test-dir build --output-on-failure
 ~~~
 
 分阶段任务、测试要求和退出门槛见 [开发计划](docs/DEVELOPMENT_PLAN_ZH.md)，字段兼容与指纹规则见 [Schema 版本规则](docs/SCHEMA_VERSIONING_ZH.md)。

@@ -212,7 +212,7 @@ PYTHONPATH=python python3 tools/ocf_phase0.py
 - [x] Phase 0B：六类 artifact 的 JSON Schema 与 negative tests
 - [x] Phase 0B：Measurement、DecisionRecord、CompilationTrace 与字段隔离
 - [x] Phase 0B：canonical fingerprint 规则与 golden fingerprint
-- [ ] Phase 0B：最小 C++ reader 与跨语言 round-trip
+- [x] Phase 0B：最小 C++ reader、canonical SHA-256 与跨语言 golden round-trip
 - [ ] Phase 0C：锁定 MLIR 工具链并建立 CMake/LIT 工程
 
-下一步固定为 Phase 0B 的最小 C++ reader。它通过 golden fingerprint 后，再进入 Phase 0C 的 MLIR/CMake/LIT 工程，不提前开发 Dialect op。
+Phase 0B 已通过退出门槛。下一步进入 Phase 0C：锁定 MLIR 22.1.8，建立 `ocf-opt`、LIT/FileCheck 和版本 smoke test；在这些基础设施通过前不开发 Dialect op。
