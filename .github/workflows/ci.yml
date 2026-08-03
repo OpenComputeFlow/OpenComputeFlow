@@ -12,8 +12,8 @@ jobs:
     name: Contracts and reference
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
       - name: Install test dependencies
@@ -32,10 +32,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: opencomputeflow
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: llvm/llvm-project
           ref: llvmorg-22.1.8
@@ -49,12 +49,11 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DLLVM_ENABLE_PROJECTS=mlir
           -DLLVM_ENABLE_ASSERTIONS=ON
-          -DLLVM_ENABLE_TERMINFO=OFF
           -DLLVM_TARGETS_TO_BUILD=X86
       - name: Build required LLVM and MLIR targets
         run: >-
           cmake --build llvm-build --target
-          FileCheck llvm-lit
+          FileCheck
           MLIROptLib MLIRAffineDialect MLIRArithDialect MLIRFuncDialect
           MLIRLinalgDialect MLIRMemRefDialect MLIRSCFDialect
           MLIRTensorDialect MLIRTransformDialect MLIRTransforms
