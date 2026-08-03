@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Contracts and reference
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run reference tests
+        env:
+          PYTHONPATH: python
+        run: python -m unittest discover -s tests -v
+      - name: Run reference CLI
+        env:
+          PYTHONPATH: python
+        run: python tools/ocf_phase0.py > phase0-artifacts.json
+
+  mlir:
+    name: LLVM/MLIR integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: opencomputeflow
+      - uses: actions/checkout@v4
+        with:
+          repository: llvm/llvm-project
+          ref: llvmorg-22.1.8
+          fetch-depth: 1
+          path: llvm-project
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure LLVM and MLIR
+        run: >-
+          cmake -S llvm-project/llvm -B llvm-build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DLLVM_ENABLE_PROJECTS=mlir
+          -DLLVM_ENABLE_ASSERTIONS=ON
+          -DLLVM_ENABLE_TERMINFO=OFF
+          -DLLVM_TARGETS_TO_BUILD=X86
+      - name: Build required LLVM and MLIR targets
+        run: >-
+          cmake --build llvm-build --target
+          FileCheck llvm-lit
+          MLIROptLib MLIRAffineDialect MLIRArithDialect MLIRFuncDialect
+          MLIRLinalgDialect MLIRMemRefDialect MLIRSCFDialect
+          MLIRTensorDialect MLIRTransformDialect MLIRTransforms
+          MLIRVectorDialect
+      - name: Configure OpenComputeFlow
+        run: >-
+          cmake -S opencomputeflow -B ocf-build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DLLVM_DIR=${{ github.workspace }}/llvm-build/lib/cmake/llvm
+          -DMLIR_DIR=${{ github.workspace }}/llvm-build/lib/cmake/mlir
+      - name: Build OpenComputeFlow
+        run: cmake --build ocf-build
+      - name: Run CTest
+        run: ctest --test-dir ocf-build --output-on-failure
+      - name: Run LIT suite
+        run: cmake --build ocf-build --target check-opencomputeflow

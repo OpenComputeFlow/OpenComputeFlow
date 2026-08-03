@@ -18,7 +18,7 @@ OpenComputeFlow 是一个面向 AI 算子的软硬件映射研究框架。它位
 - **Hardware Mapping Contract**：描述计算、存储、通信资源及映射约束与决策
 - **Performance Evidence**：用分析模型、校准数据和实测解释候选的性能差异
 
-项目当前处于设计阶段。首个 MVP 是受限的 f32 direct Conv2D，用一个算子打通 Operator -> Architecture 的最小研究闭环：
+项目当前处于 MVP 开发阶段。首个 MVP 是受限的 f32 direct Conv2D，用一个算子打通 Operator -> Architecture 的最小研究闭环：
 
 - 静态 shape，input/output 使用 NCHW，filter 使用 OIHW
 - groups=1、dilation=1，stride 和 padding 为编译期常量
@@ -41,7 +41,7 @@ OpenComputeFlow 是一个面向 AI 算子的软硬件映射研究框架。它位
 
 ## 当前实现
 
-仓库已完成 Phase 0A，并开始 Phase 0B，提供契约参考与证据路径：
+仓库已完成 Phase 0A/0B，并建立 Phase 0C 的 MLIR 工程基线：
 
 - 受限 f32 direct Conv2D 语义、shape 推导和参考实现
 - 版本化 RVV Target Profile 与 Mapping Candidate legality
@@ -49,6 +49,9 @@ OpenComputeFlow 是一个面向 AI 算子的软硬件映射研究框架。它位
 - Contract、Mapping、Estimate、Measurement 和 Trace v1 JSON Schema
 - 预测与实测严格分离的 Evidence Trace，以及稳定 golden fingerprint
 - 基于 LLVM Support 的 C++ reader 与 Python/C++ canonical SHA-256 一致性测试
+- 固定 LLVM/MLIR 22.1.8 的 CMake 工程和精简 `ocf-opt` 驱动
+- 面向 Affine/Linalg/SCF/Transform/Vector 路径的 dialect registry
+- CTest、LIT/FileCheck 和 GitHub Actions 分层测试入口
 - contract、mapping、estimate 和 trace 的可运行 JSON 示例
 
 核心参考测试不需要第三方依赖；完整 Schema 测试需要开发依赖：
@@ -58,12 +61,14 @@ python3 -m pip install -r requirements-dev.txt
 PYTHONPATH=python python3 -m unittest discover -s tests -v
 PYTHONPATH=python python3 tools/ocf_phase0.py
 cmake -S . -B build -G Ninja \
-  -DLLVM_DIR=/path/to/llvm/lib/cmake/llvm
+  -DLLVM_DIR=/path/to/llvm-build/lib/cmake/llvm \
+  -DMLIR_DIR=/path/to/llvm-build/lib/cmake/mlir
 cmake --build build
 ctest --test-dir build --output-on-failure
+cmake --build build --target check-opencomputeflow
 ~~~
 
-分阶段任务、测试要求和退出门槛见 [开发计划](docs/DEVELOPMENT_PLAN_ZH.md)，字段兼容与指纹规则见 [Schema 版本规则](docs/SCHEMA_VERSIONING_ZH.md)。
+完整工具链与构建方式见 [构建说明](docs/BUILDING_ZH.md)。分阶段任务、测试要求和退出门槛见 [开发计划](docs/DEVELOPMENT_PLAN_ZH.md)，字段兼容与指纹规则见 [Schema 版本规则](docs/SCHEMA_VERSIONING_ZH.md)。
 
 ## 路线图
 
@@ -75,4 +80,4 @@ ctest --test-dir build --output-on-failure
 
 ## 仓库状态
 
-当前仓库主要包含设计文档，目录和接口将在通过相应阶段验收后逐步实现。
+当前仓库包含 Phase 0 契约、参考实现、跨语言 reader 和 MLIR 工程基线。自定义 Conv IR 将在 Phase 1A 的语义与 verifier 设计通过后引入。

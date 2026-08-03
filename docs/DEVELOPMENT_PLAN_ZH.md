@@ -213,6 +213,9 @@ PYTHONPATH=python python3 tools/ocf_phase0.py
 - [x] Phase 0B：Measurement、DecisionRecord、CompilationTrace 与字段隔离
 - [x] Phase 0B：canonical fingerprint 规则与 golden fingerprint
 - [x] Phase 0B：最小 C++ reader、canonical SHA-256 与跨语言 golden round-trip
-- [ ] Phase 0C：锁定 MLIR 工具链并建立 CMake/LIT 工程
+- [x] Phase 0C：锁定 LLVM/MLIR 22.1.8 和上游 commit
+- [x] Phase 0C：建立精简 `ocf-opt`、dialect/pass registry 和版本输出
+- [x] Phase 0C：建立 CTest、LIT/FileCheck 与 clean-environment 构建测试
+- [ ] Phase 0C：GitHub Actions 在远程环境通过
 
-Phase 0B 已通过退出门槛。下一步进入 Phase 0C：锁定 MLIR 22.1.8，建立 `ocf-opt`、LIT/FileCheck 和版本 smoke test；在这些基础设施通过前不开发 Dialect op。
+Phase 0C 已通过本地退出门槛；远程 CI 通过后完成本阶段。下一步进入 Phase 1A，先冻结最小 Conv IR 语义与 verifier 行为，再实现 TableGen op 和 Linalg lowering。

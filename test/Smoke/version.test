@@ -1,0 +1,5 @@
+# RUN: ocf-opt --version | FileCheck %s
+
+# CHECK: OpenComputeFlow 0.1.0
+# CHECK-NEXT: LLVM/MLIR 22.1.8
+# CHECK-NEXT: Contract schema 1
