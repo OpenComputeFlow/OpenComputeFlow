@@ -10,6 +10,7 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
+#include "opencomputeflow/Dialect/Conv/IR/ConvDialect.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/raw_ostream.h"
@@ -41,7 +42,7 @@ int main(int argc, char **argv) {
                   mlir::memref::MemRefDialect, mlir::scf::SCFDialect,
                   mlir::tensor::TensorDialect,
                   mlir::transform::TransformDialect,
-                  mlir::vector::VectorDialect>();
+                  mlir::vector::VectorDialect, mlir::ocf::OCFConvDialect>();
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "OpenComputeFlow optimizer driver\n", registry));
 }

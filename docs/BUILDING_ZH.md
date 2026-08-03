@@ -38,7 +38,7 @@ build/bin/ocf-opt --version
 
 `ctest` 覆盖 C++ contract reader 和 LIT smoke suite；`check-opencomputeflow` 提供与 MLIR 上游工程一致的回归测试入口。
 
-Phase 0C 的 `ocf-opt` 只注册 Conv 映射路径所需的上游 MLIR dialect 和通用 transform passes。自定义 Conv IR 将在 Phase 1A 经过语义与 verifier 设计后引入。
+当前 `ocf-opt` 注册 Conv 映射路径所需的上游 MLIR dialect、通用 transform passes 和 OCF Conv 方言。`ocf.conv2d` 目前是 Phase 1A 的语义/verifier 增量；Linalg lowering 尚未接入。
 
 ## CI
 

@@ -217,5 +217,7 @@ PYTHONPATH=python python3 tools/ocf_phase0.py
 - [x] Phase 0C：建立精简 `ocf-opt`、dialect/pass registry 和版本输出
 - [x] Phase 0C：建立 CTest、LIT/FileCheck 与 clean-environment 构建测试
 - [x] Phase 0C：GitHub Actions 在远程环境通过
+- [x] Phase 1A（第一步）：完成 `ocf.conv2d` TableGen op、MLIR 方言注册和静态 f32 MVP verifier
+- [x] Phase 1A（第一步）：增加合法/非法 Conv LIT 样例，并在干净环境中验证生成代码与诊断
 
-Phase 0C 已通过本地和远程退出门槛。下一步进入 Phase 1A，先冻结最小 Conv IR 语义与 verifier 行为，再实现 TableGen op 和 Linalg lowering。
+Phase 0C 已通过本地和远程退出门槛。Phase 1A 当前已冻结最小 Conv IR 语义与 verifier 行为；下一步实现保留 contract fingerprint/provenance 的 Linalg lowering，并加入 Python reference differential test。

@@ -50,7 +50,9 @@ OpenComputeFlow 是一个面向 AI 算子的软硬件映射研究框架。它位
 - 预测与实测严格分离的 Evidence Trace，以及稳定 golden fingerprint
 - 基于 LLVM Support 的 C++ reader 与 Python/C++ canonical SHA-256 一致性测试
 - 固定 LLVM/MLIR 22.1.8 的 CMake 工程和精简 `ocf-opt` 驱动
-- 面向 Affine/Linalg/SCF/Transform/Vector 路径的 dialect registry
+- 面向 Affine/Linalg/SCF/Transform/Vector 和 OCF Conv 的 dialect registry
+- TableGen 生成的 `ocf.conv2d` 语义 op：静态 NCHW/OIHW、f32、groups=1、dilation=1
+- Conv verifier 的合法/非法 LIT 回归样例
 - CTest、LIT/FileCheck 和 GitHub Actions 分层测试入口
 - contract、mapping、estimate 和 trace 的可运行 JSON 示例
 
@@ -80,4 +82,4 @@ cmake --build build --target check-opencomputeflow
 
 ## 仓库状态
 
-当前仓库包含 Phase 0 契约、参考实现、跨语言 reader 和 MLIR 工程基线。自定义 Conv IR 将在 Phase 1A 的语义与 verifier 设计通过后引入。
+当前仓库包含 Phase 0 契约、参考实现、跨语言 reader、MLIR 工程基线和 Phase 1A 的最小 Conv 语义方言。Linalg lowering、映射候选 materialization 与 RVV backend 仍按开发计划推进。

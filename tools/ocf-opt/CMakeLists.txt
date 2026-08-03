@@ -26,6 +26,7 @@ target_link_libraries(
     MLIRTransformDialect
     MLIRTransforms
     MLIRVectorDialect
+    MLIROCFConvDialect
 )
 
 if(MSVC)

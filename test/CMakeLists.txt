@@ -8,7 +8,7 @@ configure_lit_site_cfg(
   MAIN_CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
 )
 
-set(OCF_TEST_DEPENDS ocf-opt FileCheck)
+set(OCF_TEST_DEPENDS ocf-opt FileCheck not)
 add_lit_testsuite(
   check-opencomputeflow
   "Running OpenComputeFlow regression tests"

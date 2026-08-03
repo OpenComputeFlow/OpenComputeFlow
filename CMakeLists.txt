@@ -33,6 +33,15 @@ include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
 
+include_directories(
+  ${LLVM_INCLUDE_DIRS}
+  ${MLIR_INCLUDE_DIRS}
+  ${PROJECT_SOURCE_DIR}/include
+  ${PROJECT_BINARY_DIR}/include
+)
+
+add_subdirectory(include)
+add_subdirectory(lib)
 add_subdirectory(tools/ocf-contract-check)
 add_subdirectory(tools/ocf-opt)
 

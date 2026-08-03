@@ -53,7 +53,7 @@ jobs:
       - name: Build required LLVM and MLIR targets
         run: >-
           cmake --build llvm-build --target
-          FileCheck
+          FileCheck mlir-tblgen not
           MLIROptLib MLIRAffineDialect MLIRArithDialect MLIRFuncDialect
           MLIRLinalgDialect MLIRMemRefDialect MLIRSCFDialect
           MLIRTensorDialect MLIRTransformDialect MLIRTransforms
